@@ -17,7 +17,8 @@ Testing policy and coverage for cursor-selfhost.
 
 ```bash
 pnpm test           # All packages (--if-present)
-pnpm test:api       # API only
+pnpm test:api       # API only (uses mock Cursor CLI)
+pnpm test:e2e       # API with real Cursor CLI (requires cursor agent login)
 pnpm --filter db test   # DB package only
 ```
 
@@ -32,7 +33,8 @@ pnpm --filter db test   # DB package only
 | Package | Test file(s) | What's tested |
 |---------|--------------|----------------|
 | `apps/api` | `app.test.ts` | Health, config GET/PUT, browse, projects CRUD, chats CRUD (incl. session isolation), messages, POST messages validation, cursor status |
-| `apps/api` | `src/cursor-cli.test.ts` | `parseCursorLine`, `extractTextFromLine`, `createCursorSession`, `spawnCursorAgent` (mocked spawn) |
+| `apps/api` | `src/cursor-cli.test.ts` | `parseCursorLine`, `extractTextFromLine`, `isAssistantContent`, `createCursorSession`, `spawnCursorAgent` (mocked spawn) |
+| `apps/api` | `integration.test.ts` | Message streaming (CLI output parsing), chat isolation (sessions, no cross-chat mixing), uses mock CLI |
 | `packages/db` | `client.test.ts` | Migrations, ensureAppConfigDefaults |
 
 ---
@@ -49,8 +51,10 @@ pnpm --filter db test   # DB package only
 | API: messages list | ✅ |
 | API: POST messages (validation) | ✅ |
 | API: cursor status | ✅ |
-| Cursor CLI: parseCursorLine, extractTextFromLine | ✅ |
+| Cursor CLI: parseCursorLine, extractTextFromLine, isAssistantContent | ✅ |
 | Cursor CLI: createCursorSession, spawnCursorAgent | ✅ (mocked spawn) |
+| Integration: message streaming (user/tool/assistant filtering) | ✅ |
+| Integration: chat isolation (sessions, no cross-chat mixing) | ✅ |
 | DB: migrations | ✅ |
 | DB: ensureAppConfigDefaults | ✅ |
 | Frontend | ⬜ (Phase 5+) |
@@ -63,7 +67,8 @@ pnpm --filter db test   # DB package only
 1. **API**: Add cases to `apps/api/app.test.ts`. Use `app.fetch(new Request(...))` — no server needed.
 2. **DB**: Add cases to `packages/db/client.test.ts` or new `*.test.ts` files.
 3. **In-memory DB**: Set `process.env.DATABASE_PATH = ":memory:"` before any imports that load the db package.
-4. **Cursor CLI**: Unit tests in `apps/api/src/cursor-cli.test.ts` mock `child_process.spawn`. App tests mock `createCursorSession` so no agent binary is required.
+4. **Cursor CLI**: Unit tests in `apps/api/src/cursor-cli.test.ts` mock `child_process.spawn`. Integration tests in `integration.test.ts` use `scripts/mock-cursor-agent.js` (set via `CURSOR_CLI_PATH` in test-setup) to verify streaming and chat isolation without the real agent.
+5. **E2E with real Cursor**: Run `pnpm test:e2e` to use the real Cursor CLI. Requires `cursor agent login` and `cursor agent status` to succeed.
 
 ---
 

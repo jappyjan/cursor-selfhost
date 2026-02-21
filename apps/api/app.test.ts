@@ -5,13 +5,9 @@
  */
 import { describe, expect, it, beforeAll, vi, beforeEach } from "vitest";
 
-const mockCreateCursorSession = vi.fn();
 vi.mock("./src/cursor-cli", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./src/cursor-cli")>();
-  return {
-    ...actual,
-    createCursorSession: (...args: unknown[]) => mockCreateCursorSession(...args),
-  };
+  return { ...actual };
 });
 
 import { app } from "./app";
@@ -22,9 +18,6 @@ beforeAll(async () => {
   await ensureAppConfigDefaults();
 });
 
-beforeEach(() => {
-  mockCreateCursorSession.mockResolvedValue("test-session-123");
-});
 
 function fetch(path: string, init?: RequestInit) {
   return app.fetch(new Request(`http://localhost${path}`, init));
@@ -216,7 +209,7 @@ describe("API", () => {
       projectId = projects[0]?.id ?? "";
     });
 
-    it("POST /api/projects/:id/chats creates chat with session isolation", async () => {
+    it("POST /api/projects/:id/chats creates chat with null sessionId (session from first message)", async () => {
       const res = await fetch(`/api/projects/${projectId}/chats`, {
         method: "POST",
       });
@@ -224,20 +217,7 @@ describe("API", () => {
       const json = await res.json();
       expect(json.projectId).toBe(projectId);
       expect(json.id).toBeDefined();
-      expect(json.sessionId).toBe("test-session-123");
-      expect(mockCreateCursorSession).toHaveBeenCalledWith(expect.any(String));
-    });
-
-    it("POST /api/projects/:id/chats creates chat with null sessionId when Cursor fails", async () => {
-      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-      mockCreateCursorSession.mockRejectedValueOnce(new Error("ENOENT"));
-      const res = await fetch(`/api/projects/${projectId}/chats`, {
-        method: "POST",
-      });
-      expect(res.status).toBe(200);
-      const json = await res.json();
       expect(json.sessionId).toBeNull();
-      consoleSpy.mockRestore();
     });
 
     it("GET /api/projects/:id/chats returns chats", async () => {
@@ -255,8 +235,30 @@ describe("API", () => {
       const chatId = created.id;
       const res = await fetch(`/api/chats/${chatId}`, { method: "DELETE" });
       expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json).toEqual({ ok: true });
       const getRes = await fetch(`/api/chats/${chatId}`);
       expect(getRes.status).toBe(404);
+    });
+
+    it("DELETE /api/chats/:id deletes chat and its messages", async () => {
+      const createRes = await fetch(`/api/projects/${projectId}/chats`, {
+        method: "POST",
+      });
+      const created = await createRes.json();
+      const chatId = created.id;
+      await fetch(`/api/chats/${chatId}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: "Test message" }),
+      });
+      const res = await fetch(`/api/chats/${chatId}`, { method: "DELETE" });
+      expect(res.status).toBe(200);
+      const getRes = await fetch(`/api/chats/${chatId}`);
+      expect(getRes.status).toBe(404);
+      const messagesRes = await fetch(`/api/chats/${chatId}/messages`);
+      const messages = await messagesRes.json();
+      expect(messages).toEqual([]);
     });
 
     it("DELETE /api/chats/:id returns 404 for unknown chat", async () => {

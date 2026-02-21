@@ -12,10 +12,24 @@ async function main() {
   runMigrations();
   await ensureAppConfigDefaults();
   const port = parseInt(process.env.PORT ?? "3001", 10);
-  console.log(`API listening on http://localhost:${port}`);
 
-  const { serve } = await import("@hono/node-server");
-  serve({ fetch: app.fetch, port });
+  const { createAdaptorServer } = await import("@hono/node-server");
+  const server = createAdaptorServer({ fetch: app.fetch });
+
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", (err: NodeJS.ErrnoException) => {
+      if (err.code === "EADDRINUSE") {
+        console.error(`Port ${port} is already in use. Kill the other process or set PORT=...`);
+      }
+      reject(err);
+    });
+    server.listen(port, () => resolve());
+  }).catch((err) => {
+    console.error("Failed to start API server:", err);
+    process.exit(1);
+  });
+
+  console.log(`API listening on http://localhost:${port}`);
 }
 
 main();

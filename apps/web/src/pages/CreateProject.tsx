@@ -229,7 +229,13 @@ export function CreateProject() {
           </Button>
           {step < 3 ? (
             <Button
-              onClick={() => setStep(step + 1)}
+              onClick={() => {
+                if (step === 2) {
+                  setName(suggestedName || "Project");
+                  setSlug(suggestedSlug || "project");
+                }
+                setStep(step + 1);
+              }}
               disabled={
                 (step === 1 && !canProceedStep1) ||
                 (step === 2 && !canProceedStep2)

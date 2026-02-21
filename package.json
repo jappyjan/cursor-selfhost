@@ -9,7 +9,8 @@
     "db:migrate": "pnpm --filter db migrate",
     "db:generate": "pnpm --filter db generate",
     "test": "pnpm run test:api && pnpm --filter db test",
-    "test:api": "pnpm --filter api test"
+    "test:api": "pnpm --filter api test",
+    "test:e2e": "RUN_E2E_WITH_REAL_CURSOR=1 pnpm --filter api test"
   },
   "devDependencies": {
     "typescript": "^5.7.2"

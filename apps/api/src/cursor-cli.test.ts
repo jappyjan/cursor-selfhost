@@ -13,6 +13,7 @@ vi.mock("child_process", () => ({
 import {
   parseCursorLine,
   extractTextFromLine,
+  isAssistantContent,
   createCursorSession,
   spawnCursorAgent,
 } from "./cursor-cli";
@@ -37,6 +38,24 @@ describe("parseCursorLine", () => {
     const parsed = parseCursorLine(line);
     expect(parsed).not.toBeNull();
     expect(parsed!.message?.content).toHaveLength(1);
+  });
+});
+
+describe("isAssistantContent", () => {
+  it("returns true for assistant type", () => {
+    expect(isAssistantContent({ type: "assistant", message: { content: [{ text: "Hi" }] } })).toBe(true);
+  });
+  it("returns true for result type", () => {
+    expect(isAssistantContent({ type: "result", result: "Done" })).toBe(true);
+  });
+  it("returns false for user type (must not stream user echo)", () => {
+    expect(isAssistantContent({ type: "user", message: { content: [{ text: "Hello" }] } })).toBe(false);
+  });
+  it("returns false for tool_call type (must not stream tool output)", () => {
+    expect(isAssistantContent({ type: "tool_call", message: { content: [{ text: "[Tool: x]" }] } })).toBe(false);
+  });
+  it("returns false for system type", () => {
+    expect(isAssistantContent({ type: "system", session_id: "x" })).toBe(false);
   });
 });
 

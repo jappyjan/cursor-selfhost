@@ -9,7 +9,7 @@ import {
   spawnCursorAgent,
   parseCursorLine,
   extractTextFromLine,
-  createCursorSession,
+  isAssistantContent,
 } from "./src/cursor-cli";
 import {
   createProjectSchema,
@@ -292,22 +292,16 @@ app.post("/api/projects/:projectId/chats", async (c) => {
   const projectId = c.req.param("projectId");
   const projectRows = await db.select().from(schema.projects).where(eq(schema.projects.id, projectId));
   if (projectRows.length === 0) return c.json({ error: "Project not found" }, 404);
-  const project = projectRows[0];
 
-  let sessionId: string | null = null;
-  try {
-    sessionId = await createCursorSession(project.path);
-  } catch (e) {
-    console.error("Failed to create Cursor session:", e);
-  }
-
+  // Defer session creation to first message — avoids Cursor CLI potentially returning
+  // the same session for the same workspace, which would mix chat histories.
   const id = nanoid();
   const now = new Date();
   await db.insert(schema.chats).values({
     id,
     projectId,
     title: null,
-    sessionId,
+    sessionId: null,
     createdAt: now,
     updatedAt: now,
   });
@@ -335,11 +329,16 @@ app.patch("/api/chats/:id", async (c) => {
 
 app.delete("/api/chats/:id", async (c) => {
   const id = c.req.param("id");
-  const rows = await db.select().from(schema.chats).where(eq(schema.chats.id, id));
-  if (rows.length === 0) return c.json({ error: "Not found" }, 404);
-  await db.delete(schema.messages).where(eq(schema.messages.chatId, id));
-  await db.delete(schema.chats).where(eq(schema.chats.id, id));
-  return c.json({ ok: true });
+  try {
+    const rows = await db.select().from(schema.chats).where(eq(schema.chats.id, id));
+    if (rows.length === 0) return c.json({ error: "Not found" }, 404);
+    await db.delete(schema.messages).where(eq(schema.messages.chatId, id));
+    await db.delete(schema.chats).where(eq(schema.chats.id, id));
+    return c.json({ ok: true });
+  } catch (err) {
+    console.error("DELETE /api/chats/:id error:", err);
+    return c.json({ error: "Failed to delete chat" }, 500);
+  }
 });
 
 // Messages
@@ -396,6 +395,20 @@ app.post("/api/chats/:id/messages", async (c) => {
       proc.stderr?.on("data", (chunk: Buffer) => {
         stderrBuffer += chunk.toString("utf-8");
       });
+      const safeEnqueue = (data: Uint8Array) => {
+        try {
+          controller.enqueue(data);
+        } catch {
+          /* stream may be closed */
+        }
+      };
+      const safeClose = () => {
+        try {
+          controller.close();
+        } catch {
+          /* stream may be closed */
+        }
+      };
       const onData = (chunk: Buffer) => {
         const text = chunk.toString("utf-8");
         const lines = text.split("\n").filter((l) => l.trim());
@@ -403,16 +416,17 @@ app.post("/api/chats/:id/messages", async (c) => {
           const parsed = parseCursorLine(line);
           if (!parsed) continue;
           if (parsed.session_id) sessionId = parsed.session_id;
+          if (!isAssistantContent(parsed)) continue;
           const extracted = extractTextFromLine(parsed);
           if (extracted) {
             assistantChunks.push(extracted);
-            controller.enqueue(new TextEncoder().encode(JSON.stringify({ type: "chunk", content: extracted }) + "\n"));
+            safeEnqueue(new TextEncoder().encode(JSON.stringify({ type: "chunk", content: extracted }) + "\n"));
           }
           if (parsed.type === "result" && parsed.result) {
-            controller.enqueue(new TextEncoder().encode(JSON.stringify({ type: "done", sessionId: parsed.session_id ?? null }) + "\n"));
+            safeEnqueue(new TextEncoder().encode(JSON.stringify({ type: "done", sessionId: parsed.session_id ?? null }) + "\n"));
           }
           if (parsed.error) {
-            controller.enqueue(new TextEncoder().encode(JSON.stringify({ type: "error", error: parsed.error }) + "\n"));
+            safeEnqueue(new TextEncoder().encode(JSON.stringify({ type: "error", error: parsed.error }) + "\n"));
           }
         }
       };
@@ -435,6 +449,11 @@ app.post("/api/chats/:id/messages", async (c) => {
               await db.update(schema.chats).set({ sessionId, updatedAt: new Date() }).where(eq(schema.chats.id, chatId));
             }
           } catch (e) {
+            const err = e as { code?: string };
+            if (err.code === "SQLITE_CONSTRAINT_FOREIGNKEY") {
+              // Chat may have been deleted before persist completed (e.g. in tests)
+              return;
+            }
             console.error("Failed to persist assistant message:", e);
           }
         })();
@@ -443,13 +462,13 @@ app.post("/api/chats/:id/messages", async (c) => {
           const detail = stderrTrimmed
             ? `Cursor CLI exited with code ${code}. stderr: ${stderrTrimmed.slice(0, 2000)}`
             : `Cursor CLI exited with code ${code}`;
-          controller.enqueue(new TextEncoder().encode(JSON.stringify({ type: "error", error: detail }) + "\n"));
+          safeEnqueue(new TextEncoder().encode(JSON.stringify({ type: "error", error: detail }) + "\n"));
         }
-        controller.close();
+        safeClose();
       });
       proc.on("error", (err) => {
-        controller.enqueue(new TextEncoder().encode(JSON.stringify({ type: "error", error: err.message }) + "\n"));
-        controller.close();
+        safeEnqueue(new TextEncoder().encode(JSON.stringify({ type: "error", error: err.message }) + "\n"));
+        safeClose();
       });
     },
   });

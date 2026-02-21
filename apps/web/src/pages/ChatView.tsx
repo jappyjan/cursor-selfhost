@@ -59,6 +59,7 @@ export function ChatView() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const lastSentRef = useRef<string>("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const sendingToChatIdRef = useRef<string | null>(null);
 
   const { data: chat, error } = useQuery({
     queryKey: ["chat", chatId],
@@ -81,10 +82,10 @@ export function ChatView() {
   });
 
   const sendMutation = useMutation({
-    mutationFn: async (content: string) => {
+    mutationFn: async ({ content, targetChatId }: { content: string; targetChatId: string }) => {
       setSendError(null);
       setStreamingContent("");
-      await sendMessageStreaming(chatId!, content, (chunk) => {
+      await sendMessageStreaming(targetChatId, content, (chunk) => {
         if (chunk.type === "chunk") {
           setStreamingContent((prev) => prev + chunk.content);
         }
@@ -93,15 +94,17 @@ export function ChatView() {
         }
       });
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["messages", chatId] });
-      queryClient.invalidateQueries({ queryKey: ["chat", chatId] });
+    onSuccess: (_data, { targetChatId }) => {
+      queryClient.invalidateQueries({ queryKey: ["messages", targetChatId] });
+      queryClient.invalidateQueries({ queryKey: ["chat", targetChatId] });
       queryClient.invalidateQueries({ queryKey: ["chats"] });
       setStreamingContent("");
+      if (sendingToChatIdRef.current === targetChatId) sendingToChatIdRef.current = null;
     },
-    onError: (err) => {
+    onError: (err, { targetChatId }) => {
       setSendError((err as Error).message);
       setStreamingContent("");
+      if (sendingToChatIdRef.current === targetChatId) sendingToChatIdRef.current = null;
     },
   });
 
@@ -110,11 +113,12 @@ export function ChatView() {
 
   const handleSend = useCallback(() => {
     const text = input.trim();
-    if (!text || isStreaming) return;
+    if (!text || isStreaming || !chatId) return;
     lastSentRef.current = text;
-    sendMutation.mutate(text);
+    sendingToChatIdRef.current = chatId;
+    sendMutation.mutate({ content: text, targetChatId: chatId });
     setInput("");
-  }, [input, isStreaming, sendMutation]);
+  }, [input, isStreaming, sendMutation, chatId]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -153,7 +157,24 @@ export function ChatView() {
   }, [chatId, slug, navigate, queryClient]);
 
   const displayMessages = [...messages];
-  if (streamingContent) {
+  const isViewingSendingChat = chatId && sendingToChatIdRef.current === chatId;
+  // Only show streaming/optimistic UI when viewing the chat that initiated the send
+  if (isViewingSendingChat && isStreaming && lastSentRef.current) {
+    const lastSent = lastSentRef.current;
+    const alreadyHasUserMessage = messages.some(
+      (m) => m.role === "user" && m.content === lastSent
+    );
+    if (!alreadyHasUserMessage) {
+      displayMessages.push({
+        id: "__pending_user__",
+        chatId: chatId!,
+        role: "user",
+        content: lastSent,
+        createdAt: new Date().toISOString(),
+      });
+    }
+  }
+  if (isViewingSendingChat && streamingContent) {
     displayMessages.push({
       id: "__streaming__",
       chatId: chatId!,
@@ -165,7 +186,7 @@ export function ChatView() {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length, streamingContent]);
+  }, [messages.length, streamingContent, isStreaming]);
 
   if (error || !chat) {
     return (
@@ -267,9 +288,9 @@ export function ChatView() {
               onClick={() => {
                 setSendError(null);
                 const toRetry = lastSentRef.current || input.trim();
-                if (toRetry) {
+                if (toRetry && chatId) {
                   lastSentRef.current = toRetry;
-                  sendMutation.mutate(toRetry);
+                  sendMutation.mutate({ content: toRetry, targetChatId: chatId });
                 }
               }}
             >

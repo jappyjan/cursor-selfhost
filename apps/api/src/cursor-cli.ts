@@ -153,7 +153,26 @@ export function parseCursorLine(line: string): CursorLine | null {
 }
 
 /**
+ * Types of Cursor CLI output we should stream to the user as assistant content.
+ * Excludes: user (echo), system, tool_call, tool_result, etc. — those would mix
+ * prompts and tool output into the chat.
+ */
+const ASSISTANT_CONTENT_TYPES = new Set(["assistant", "result"]);
+
+/**
+ * Returns true if this line contains assistant response content we should stream.
+ * User echoes, tool calls, system messages etc. must NOT be included.
+ */
+export function isAssistantContent(line: CursorLine): boolean {
+  if (line.type && ASSISTANT_CONTENT_TYPES.has(line.type)) return true;
+  // Legacy: some outputs may not have type; result field indicates final answer
+  if (line.result) return true;
+  return false;
+}
+
+/**
  * Extract plain text from a Cursor output line for streaming/accumulation.
+ * Only call this for lines where isAssistantContent(line) is true.
  */
 export function extractTextFromLine(line: CursorLine): string {
   if (line.result) return line.result;
