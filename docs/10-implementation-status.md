@@ -53,10 +53,10 @@ Track what's implemented for the MVP. Update as work progresses. Use for plannin
 
 | Task | Status | Notes |
 |------|--------|-------|
-| 4.1 Cursor CLI service | ⬜ | |
-| 4.2 Auth check | ⬜ | |
-| 4.3 Streaming endpoint | ⬜ | |
-| 4.4 Persist messages | ⬜ | |
+| 4.1 Cursor CLI service | ✅ | spawnCursorAgent, createCursorSession, parseCursorLine, extractTextFromLine |
+| 4.2 Auth check | ✅ | checkCursorAuth, CURSOR_API_KEY / CURSOR_CLI_PATH |
+| 4.3 Streaming endpoint | ✅ | POST /api/chats/:id/messages, NDJSON stream |
+| 4.4 Persist messages | ✅ | User + assistant messages, session_id on chat |
 
 ---
 
@@ -137,7 +137,8 @@ Track what's implemented for the MVP. Update as work progresses. Use for plannin
 - Phase 1: Monorepo, API (Node/tsx), Vite web, Drizzle + better-sqlite3
 - Phase 2: Schema, migrations, app_config defaults
 - Phase 3: Config, browse, projects, chats, messages API
-- Tests: API integration tests, DB unit tests (see docs/12-testing.md)
+- Phase 4: Cursor CLI integration, streaming, session isolation
+- Tests: API integration tests, Cursor CLI unit tests, DB unit tests (see docs/12-testing.md)
 
 ---
 
@@ -150,7 +151,7 @@ Track what's implemented for the MVP. Update as work progresses. Use for plannin
 | API entry | `apps/api/main.ts` | Node/tsx + Hono (Bun fallback when sqlite supported) |
 | Web entry | `apps/web/` | Vite + React |
 | DB schema | `packages/db/src/schema.ts` | Drizzle + better-sqlite3 |
-| Cursor service | — | Phase 4 |
+| Cursor service | `apps/api/src/cursor-cli.ts` | spawn, create-chat, parse NDJSON |
 
 ---
 
@@ -159,4 +160,5 @@ Track what's implemented for the MVP. Update as work progresses. Use for plannin
 | Date | Change |
 |------|--------|
 | 2025-02 | Phase 1–3 complete; tests; Vite host:true for LAN/Tailscale; API uses Node (better-sqlite3) |
+| 2025-02 | Phase 4 complete; Cursor CLI unit tests; session isolation integration tests; docs updated |
 | — | Initial implementation plan and status doc created |

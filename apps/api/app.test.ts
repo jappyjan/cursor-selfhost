@@ -1,14 +1,29 @@
 /**
  * API tests — run with: pnpm test
  * Uses in-memory SQLite (DATABASE_PATH=:memory:) for isolation.
+ * Mocks cursor-cli to avoid requiring the Cursor agent binary.
  */
-import { describe, expect, it, beforeAll } from "vitest";
+import { describe, expect, it, beforeAll, vi, beforeEach } from "vitest";
+
+const mockCreateCursorSession = vi.fn();
+vi.mock("./src/cursor-cli", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./src/cursor-cli")>();
+  return {
+    ...actual,
+    createCursorSession: (...args: unknown[]) => mockCreateCursorSession(...args),
+  };
+});
+
 import { app } from "./app";
 import { runMigrations, ensureAppConfigDefaults } from "@cursor-selfhost/db";
 
 beforeAll(async () => {
   runMigrations();
   await ensureAppConfigDefaults();
+});
+
+beforeEach(() => {
+  mockCreateCursorSession.mockResolvedValue("test-session-123");
 });
 
 function fetch(path: string, init?: RequestInit) {
@@ -62,6 +77,18 @@ describe("API", () => {
   });
 
   describe("GET /api/browse", () => {
+    it("returns entries for path under base", async () => {
+      await fetch("/api/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectsBasePath: "/tmp" }),
+      });
+      const res = await fetch("/api/browse?path=/tmp");
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(Array.isArray(json.entries)).toBe(true);
+    });
+
     it("returns 400 when path outside base", async () => {
       await fetch("/api/config", {
         method: "PUT",
@@ -72,6 +99,33 @@ describe("API", () => {
       expect(res.status).toBe(400);
       const json = await res.json();
       expect(json.error).toContain("outside");
+    });
+  });
+
+  describe("POST /api/browse/create", () => {
+    it("creates folder under base", async () => {
+      await fetch("/api/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectsBasePath: "/tmp" }),
+      });
+      const res = await fetch("/api/browse/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ parentPath: "/tmp", name: "cursor-selfhost-test-create" }),
+      });
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.path).toContain("cursor-selfhost-test-create");
+    });
+
+    it("returns 400 when name invalid", async () => {
+      const res = await fetch("/api/browse/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ parentPath: "/tmp", name: "../etc" }),
+      });
+      expect(res.status).toBe(400);
     });
   });
 
@@ -162,7 +216,7 @@ describe("API", () => {
       projectId = projects[0]?.id ?? "";
     });
 
-    it("POST /api/projects/:id/chats creates chat", async () => {
+    it("POST /api/projects/:id/chats creates chat with session isolation", async () => {
       const res = await fetch(`/api/projects/${projectId}/chats`, {
         method: "POST",
       });
@@ -170,6 +224,20 @@ describe("API", () => {
       const json = await res.json();
       expect(json.projectId).toBe(projectId);
       expect(json.id).toBeDefined();
+      expect(json.sessionId).toBe("test-session-123");
+      expect(mockCreateCursorSession).toHaveBeenCalledWith(expect.any(String));
+    });
+
+    it("POST /api/projects/:id/chats creates chat with null sessionId when Cursor fails", async () => {
+      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      mockCreateCursorSession.mockRejectedValueOnce(new Error("ENOENT"));
+      const res = await fetch(`/api/projects/${projectId}/chats`, {
+        method: "POST",
+      });
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.sessionId).toBeNull();
+      consoleSpy.mockRestore();
     });
 
     it("GET /api/projects/:id/chats returns chats", async () => {
