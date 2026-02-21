@@ -6,6 +6,8 @@
 import { spawn, type ChildProcess } from "child_process";
 
 const CURSOR_CLI = process.env.CURSOR_CLI_PATH ?? "cursor";
+/** If CURSOR_CLI_PATH points to the agent binary (e.g. "agent"), omit the "agent" subcommand */
+const IS_AGENT_BINARY = process.env.CURSOR_CLI_PATH?.endsWith("agent") ?? false;
 
 export interface CursorSpawnOptions {
   workspace: string;
@@ -29,12 +31,13 @@ export function spawnCursorAgent(
   options: CursorSpawnOptions
 ): ChildProcess {
   const args = [
-    "agent",
+    ...(IS_AGENT_BINARY ? [] : ["agent"]),
     "--print",
     "--output-format",
     "stream-json",
     "--workspace",
     options.workspace,
+    "--trust",
   ];
   if (options.resumeSessionId) {
     args.push("--resume", options.resumeSessionId);
@@ -46,6 +49,7 @@ export function spawnCursorAgent(
   const proc = spawn(CURSOR_CLI, args, {
     stdio: ["pipe", "pipe", "pipe"],
     env: { ...process.env },
+    cwd: options.workspace,
   });
 
   proc.stdin?.write(message, "utf-8");
@@ -55,30 +59,82 @@ export function spawnCursorAgent(
 }
 
 /**
- * Check if Cursor CLI is installed and authenticated.
- * Runs "cursor agent status" and returns true if successful.
+ * Create a new isolated chat session for the workspace.
+ * Returns the session ID to use with --resume. Each chat gets its own session.
  */
-export async function checkCursorAuth(): Promise<{ ok: boolean; error?: string }> {
-  return new Promise((resolve) => {
-    const proc = spawn(CURSOR_CLI, ["agent", "status"], {
+export async function createCursorSession(workspacePath: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const args = [
+      ...(IS_AGENT_BINARY ? [] : ["agent"]),
+      "create-chat",
+      "--workspace",
+      workspacePath,
+    ];
+    const proc = spawn(CURSOR_CLI, args, {
       stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env },
     });
+    let stdout = "";
     let stderr = "";
+    proc.stdout?.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
     proc.stderr?.on("data", (chunk) => {
       stderr += chunk.toString();
     });
     proc.on("close", (code) => {
       if (code === 0) {
+        const sessionId = stdout.trim();
+        resolve(sessionId || "");
+      } else {
+        reject(new Error(stderr.trim() || `agent create-chat exited with code ${code}`));
+      }
+    });
+    proc.on("error", (err) => {
+      reject(err);
+    });
+  });
+}
+
+/**
+ * Check if Cursor CLI is installed and authenticated.
+ * Returns ok if CURSOR_API_KEY is set, or if "cursor agent status" exits 0.
+ */
+export async function checkCursorAuth(): Promise<{ ok: boolean; error?: string }> {
+  if (process.env.CURSOR_API_KEY?.trim()) {
+    return { ok: true };
+  }
+  const statusArgs = IS_AGENT_BINARY ? ["status"] : ["agent", "status"];
+  return new Promise((resolve) => {
+    const proc = spawn(CURSOR_CLI, statusArgs, {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env },
+    });
+    let stderr = "";
+    let stdout = "";
+    proc.stderr?.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    proc.stdout?.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    proc.on("close", (code) => {
+      if (code === 0) {
         resolve({ ok: true });
       } else {
+        const msg = stderr.trim() || stdout.trim() || `cursor agent status exited with code ${code}`;
         resolve({
           ok: false,
-          error: stderr.trim() || `cursor agent status exited with code ${code}`,
+          error: msg,
         });
       }
     });
     proc.on("error", (err) => {
-      resolve({ ok: false, error: err.message });
+      const msg =
+        (err as NodeJS.ErrnoException).code === "ENOENT"
+          ? `Cursor CLI not found. Set CURSOR_CLI_PATH to the binary (e.g. "agent" or /path/to/agent) or ensure it is in PATH.`
+          : err.message;
+      resolve({ ok: false, error: msg });
     });
   });
 }

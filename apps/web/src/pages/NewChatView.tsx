@@ -3,6 +3,9 @@ import { useParams, useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { createChat, fetchProjectBySlug } from "@/lib/api";
 
+/** Prevents duplicate chat creation when React Strict Mode double-mounts */
+const creatingForSlug = new Set<string>();
+
 export default function NewChatView() {
   const { slug } = useParams<{ slug: string }>();
   const navigate = useNavigate();
@@ -14,18 +17,20 @@ export default function NewChatView() {
       return createChat(project.id);
     },
     onSuccess: (chat) => {
+      creatingForSlug.delete(slug!);
       queryClient.invalidateQueries({ queryKey: ["chats"] });
       navigate(`/p/${slug}/c/${chat.id}`, { replace: true });
     },
     onError: () => {
+      creatingForSlug.delete(slug!);
       // Stay on page to show error
     },
   });
 
   useEffect(() => {
-    if (slug && mutation.isIdle) {
-      mutation.mutate();
-    }
+    if (!slug || creatingForSlug.has(slug)) return;
+    creatingForSlug.add(slug);
+    mutation.mutate();
   }, [slug]);
 
   return (

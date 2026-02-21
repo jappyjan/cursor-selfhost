@@ -6,5 +6,8 @@ export default defineConfig({
     include: ["**/*.test.ts"],
     sequence: { concurrent: false },
     setupFiles: ["./test-setup.ts"],
+    env: {
+      DATABASE_PATH: ":memory:",
+    },
   },
 });

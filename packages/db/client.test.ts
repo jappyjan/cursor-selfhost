@@ -1,8 +1,7 @@
 /**
  * DB package tests — run with: pnpm test
+ * Uses in-memory SQLite via test-setup.ts
  */
-process.env.DATABASE_PATH = ":memory:";
-
 import { describe, expect, it, beforeAll } from "vitest";
 import { db, runMigrations, ensureAppConfigDefaults } from "./src/client";
 import * as schema from "./src/schema";

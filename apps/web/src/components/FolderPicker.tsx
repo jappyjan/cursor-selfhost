@@ -1,51 +1,82 @@
 import { useState, useCallback } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Folder, FolderOpen, ChevronRight, Loader2 } from "lucide-react";
-import { fetchBrowse, fetchConfig } from "@/lib/api";
+import { Folder, FolderOpen, ChevronRight, Loader2, FolderPlus } from "lucide-react";
+import { fetchBrowse, fetchConfig, createFolder } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 interface FolderPickerProps {
   value: string;
   onChange: (path: string) => void;
   className?: string;
+  /** When provided (e.g. for Setup), used as browse root when projectsBasePath is not configured */
+  rootPath?: string;
+  /** When true, hide manual path input to enforce selection via picker only */
+  pickerOnly?: boolean;
+  /** When true (Setup), allow browsing any path on the system from filesystem root */
+  setupMode?: boolean;
 }
 
-export function FolderPicker({ value, onChange, className }: FolderPickerProps) {
+export function FolderPicker({ value, onChange, className, rootPath, pickerOnly, setupMode }: FolderPickerProps) {
   const [currentPath, setCurrentPath] = useState(value || "");
+  const [newFolderName, setNewFolderName] = useState("");
+  const queryClient = useQueryClient();
   const { data: config } = useQuery({ queryKey: ["config"], queryFn: fetchConfig });
-  const basePath = config?.projectsBasePath ?? "";
+  const basePath = setupMode
+    ? (config?.filesystemRoot ?? rootPath ?? "")
+    : (config?.projectsBasePath ?? rootPath ?? "");
 
   const pathToBrowse = currentPath || basePath;
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ["browse", pathToBrowse],
-    queryFn: () => fetchBrowse(pathToBrowse),
-    enabled: !!pathToBrowse,
+    queryKey: ["browse", pathToBrowse, setupMode],
+    queryFn: () => fetchBrowse(pathToBrowse, setupMode),
+    enabled: !!pathToBrowse || (setupMode && !!basePath),
+  });
+
+  const createMutation = useMutation({
+    mutationFn: () => createFolder(pathToBrowse, newFolderName, setupMode),
+    onSuccess: (result) => {
+      setCurrentPath(result.path);
+      onChange(result.path);
+      setNewFolderName("");
+      queryClient.invalidateQueries({ queryKey: ["browse"] });
+    },
   });
 
   const entries = data?.entries ?? [];
-  const pathParts = pathToBrowse.split("/").filter(Boolean);
-  const breadcrumbs = pathToBrowse ? ["", ...pathParts] : [];
+  const baseNorm = basePath.replace(/\/+$/, "") || "/";
+  const currentNorm = pathToBrowse.replace(/\/+$/, "") || "/";
+  const relativePath =
+    currentNorm === baseNorm || !currentNorm.startsWith(baseNorm + "/")
+      ? ""
+      : currentNorm.slice(baseNorm.length + 1);
+  const relativeParts = relativePath ? relativePath.split("/").filter(Boolean) : [];
+  const breadcrumbs = ["", ...relativeParts];
 
   const handleSelectDir = useCallback(
     (name: string) => {
       if (name === ".." || name === "." || name.includes("/") || name.includes("\\")) return;
-      const newPath = pathToBrowse ? `${pathToBrowse.replace(/\/$/, "")}/${name}` : `/${name}`;
+      const newPath = currentNorm === "/" ? `/${name}` : `${currentNorm}/${name}`;
       setCurrentPath(newPath);
       onChange(newPath);
     },
-    [pathToBrowse, onChange]
+    [currentNorm, onChange]
   );
 
   const handleBreadcrumb = useCallback(
     (idx: number) => {
-      const newPath = idx === 0 ? basePath : "/" + pathParts.slice(0, idx).join("/");
+      const newPath =
+        idx === 0
+          ? baseNorm
+          : baseNorm === "/"
+            ? "/" + relativeParts.slice(0, idx).join("/")
+            : `${baseNorm}/${relativeParts.slice(0, idx).join("/")}`;
       setCurrentPath(newPath);
       onChange(newPath);
     },
-    [basePath, pathParts, onChange]
+    [baseNorm, relativeParts, onChange]
   );
 
   const handleUseCurrent = useCallback(() => {
@@ -65,7 +96,9 @@ export function FolderPicker({ value, onChange, className }: FolderPickerProps) 
             className="flex items-center gap-0.5 rounded px-1.5 py-0.5 hover:bg-accent"
           >
             {i === 0 ? (
-              <span className="text-muted-foreground">/</span>
+              <span className="text-muted-foreground" title={baseNorm}>
+                {baseNorm.split("/").pop() || "base"}
+              </span>
             ) : (
               <>
                 <ChevronRight className="h-3 w-3 text-muted-foreground" />
@@ -87,7 +120,7 @@ export function FolderPicker({ value, onChange, className }: FolderPickerProps) 
           </div>
         ) : (
           <ul className="divide-y divide-border">
-            {pathToBrowse !== basePath && (
+            {currentNorm !== baseNorm && (
               <li>
                 <button
                   type="button"
@@ -118,18 +151,59 @@ export function FolderPicker({ value, onChange, className }: FolderPickerProps) 
           </ul>
         )}
       </div>
-      <div className="flex gap-2">
-        <Input
-          type="text"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder="/path/to/project"
-          className="font-mono text-sm"
-        />
-        <Button type="button" variant="outline" size="sm" onClick={handleUseCurrent}>
-          Use selected
-        </Button>
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex items-center gap-2">
+          <Input
+            type="text"
+            placeholder="New folder name"
+            value={newFolderName}
+            onChange={(e) => setNewFolderName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && newFolderName.trim()) {
+                e.preventDefault();
+                createMutation.mutate();
+              }
+            }}
+            className="h-9 w-40 font-mono text-sm"
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => createMutation.mutate()}
+            disabled={!newFolderName.trim() || createMutation.isPending}
+          >
+            {createMutation.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <>
+                <FolderPlus className="h-4 w-4" />
+                Create
+              </>
+            )}
+          </Button>
+        </div>
+        {createMutation.isError && (
+          <span className="text-sm text-destructive">{(createMutation.error as Error).message}</span>
+        )}
       </div>
+      {!pickerOnly && (
+        <div className="flex gap-2">
+          <Input
+            type="text"
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder="/path/to/project"
+            className="font-mono text-sm"
+          />
+          <Button type="button" variant="outline" size="sm" onClick={handleUseCurrent}>
+            Use selected
+          </Button>
+        </div>
+      )}
+      {pickerOnly && (
+        <p className="text-xs text-muted-foreground font-mono">{value || "Select a folder above"}</p>
+      )}
     </div>
   );
 }

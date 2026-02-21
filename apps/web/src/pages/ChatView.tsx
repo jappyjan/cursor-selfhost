@@ -211,7 +211,8 @@ export function ChatView() {
                     Cursor not logged in
                   </p>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Run <code className="rounded bg-muted px-1 font-mono">cursor agent login</code> in your terminal to authenticate.
+                    Set <code className="rounded bg-muted px-1 font-mono">CURSOR_API_KEY</code> in the API env, or run{" "}
+                    <code className="rounded bg-muted px-1 font-mono">agent login</code> in the same terminal where the API runs.
                   </p>
                 </div>
               </div>

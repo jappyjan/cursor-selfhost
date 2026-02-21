@@ -1,11 +1,15 @@
 import { useState } from "react";
 import { Outlet, useLocation } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { fetchConfig } from "@/lib/api";
 import { Header } from "./Header";
 import { Sidebar } from "./Sidebar";
 
 export function AppShell() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const location = useLocation();
+  const { data: config } = useQuery({ queryKey: ["config"], queryFn: fetchConfig });
+  const setupRequired = !config?.configured;
 
   const pathParts = location.pathname.split("/").filter(Boolean);
   let title = "cursor-selfhost";
@@ -21,9 +25,10 @@ export function AppShell() {
         sidebarCollapsed={sidebarCollapsed}
         onToggleSidebar={() => setSidebarCollapsed((c) => !c)}
         title={title}
+        hideSidebarToggle={setupRequired}
       />
       <div className="flex flex-1 overflow-hidden">
-        <Sidebar collapsed={sidebarCollapsed} />
+        {!setupRequired && <Sidebar collapsed={sidebarCollapsed} />}
         <main className="flex-1 overflow-auto">
           <Outlet />
         </main>

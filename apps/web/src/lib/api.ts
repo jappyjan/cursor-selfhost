@@ -4,6 +4,9 @@ export type ApiConfig = {
   projectsBasePath: string | null;
   configured: boolean;
   sendShortcut: string;
+  suggestedBasePath?: string;
+  suggestedRootPath?: string;
+  filesystemRoot?: string;
 };
 
 export type Project = {
@@ -90,14 +93,45 @@ export async function createChat(projectId: string): Promise<Chat> {
 
 export type BrowseEntry = { name: string; isDir: boolean };
 
-export async function fetchBrowse(path?: string): Promise<{ entries: BrowseEntry[] }> {
-  const url = path ? `${API_BASE}/browse?path=${encodeURIComponent(path)}` : `${API_BASE}/browse`;
-  const res = await fetch(url);
+export async function createFolder(
+  parentPath: string,
+  name: string,
+  setup?: boolean
+): Promise<{ path: string }> {
+  const res = await fetch(`${API_BASE}/browse/create`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ parentPath, name, setup }),
+  });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error((err as { error?: string }).error ?? "Failed to browse");
+    throw new Error((err as { error?: string }).error ?? "Failed to create folder");
   }
   return res.json();
+}
+
+export async function fetchBrowse(path?: string, setup?: boolean): Promise<{ entries: BrowseEntry[] }> {
+  const params = new URLSearchParams();
+  if (path) params.set("path", path);
+  if (setup) params.set("setup", "1");
+  const url = `${API_BASE}/browse${params.toString() ? `?${params}` : ""}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeout);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error((err as { error?: string }).error ?? "Failed to browse");
+    }
+    return res.json();
+  } catch (e) {
+    clearTimeout(timeout);
+    if ((e as Error).name === "AbortError") {
+      throw new Error("Request timed out");
+    }
+    throw e;
+  }
 }
 
 export type CreateProjectBody = {

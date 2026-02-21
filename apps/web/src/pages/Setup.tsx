@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { FolderPicker } from "@/components/FolderPicker";
+import { fetchConfig } from "@/lib/api";
 
 async function putConfig(projectsBasePath: string) {
   const res = await fetch("/api/config", {
@@ -17,26 +18,37 @@ async function putConfig(projectsBasePath: string) {
 export function Setup() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [path, setPath] = useState(
-    import.meta.env.VITE_PROJECTS_BASE_PATH ?? ""
-  );
+  const { data: config } = useQuery({ queryKey: ["config"], queryFn: fetchConfig });
+  const [path, setPath] = useState("");
+
+  useEffect(() => {
+    if (config && path === "") {
+      const defaultPath =
+        config.projectsBasePath ||
+        import.meta.env.VITE_PROJECTS_BASE_PATH ||
+        config.suggestedRootPath ||
+        config.suggestedBasePath ||
+        "";
+      setPath(defaultPath);
+    }
+  }, [config, path]);
 
   const mutation = useMutation({
     mutationFn: putConfig,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["config"] });
+    onSuccess: async () => {
+      await queryClient.refetchQueries({ queryKey: ["config"] });
       navigate("/", { replace: true });
     },
   });
 
   return (
     <div className="flex min-h-full flex-col items-center justify-center p-8">
-      <div className="w-full max-w-md space-y-6">
+      <div className="w-full max-w-lg space-y-6">
         <div>
           <h2 className="font-mono text-2xl font-semibold">Setup</h2>
           <p className="mt-2 text-sm text-muted-foreground">
-            Set the base directory for your projects. All local and git-cloned
-            projects will live under this path.
+            Browse to select or create the base directory for your projects. All
+            local and git-cloned projects will live under this path.
           </p>
         </div>
         <form
@@ -47,20 +59,16 @@ export function Setup() {
           className="space-y-4"
         >
           <div>
-            <label htmlFor="base-path" className="block text-sm font-medium">
-              Base path
-            </label>
-            <Input
-              id="base-path"
-              type="text"
-              placeholder="/home/user/projects"
+            <label className="block text-sm font-medium">Base path</label>
+            <FolderPicker
               value={path}
-              onChange={(e) => setPath(e.target.value)}
-              className="mt-1.5 font-mono"
-              required
+              onChange={setPath}
+              rootPath={config?.suggestedRootPath}
+              pickerOnly
+              setupMode
             />
           </div>
-          <Button type="submit" disabled={mutation.isPending}>
+          <Button type="submit" disabled={mutation.isPending || !path.trim()}>
             {mutation.isPending ? "Saving…" : "Save and continue"}
           </Button>
           {mutation.isError && (

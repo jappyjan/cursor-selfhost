@@ -9,6 +9,7 @@ import {
   spawnCursorAgent,
   parseCursorLine,
   extractTextFromLine,
+  createCursorSession,
 } from "./src/cursor-cli";
 import {
   createProjectSchema,
@@ -29,22 +30,37 @@ app.get("/api/config", async (c) => {
   const rows = await db.select().from(schema.appConfig);
   const map = Object.fromEntries(rows.map((r) => [r.key, r.value]));
   const projectsBasePath = map.projects_base_path ?? process.env.PROJECTS_BASE_PATH ?? "";
+  const { homedir } = await import("os");
+  const suggestedBasePath = path.join(homedir(), "cursor-selfhosted");
+  const filesystemRoot = path.parse(homedir()).root;
   return c.json({
     projectsBasePath: projectsBasePath || null,
     configured: !!projectsBasePath,
     sendShortcut: map.send_shortcut ?? "enter",
+    suggestedBasePath,
+    suggestedRootPath: homedir(),
+    filesystemRoot,
   });
 });
 
 app.put("/api/config", async (c) => {
   const body = await c.req.json<{ projectsBasePath?: string; sendShortcut?: string }>();
   if (body.projectsBasePath !== undefined) {
+    const { homedir } = await import("os");
+    const rawPath = body.projectsBasePath.trim();
+    const expandedPath = rawPath.startsWith("~")
+      ? path.join(homedir(), rawPath.slice(1).replace(/^\/+/, "") || ".")
+      : rawPath;
+    const { mkdirSync, existsSync } = await import("fs");
+    if (!existsSync(expandedPath)) {
+      mkdirSync(expandedPath, { recursive: true });
+    }
     await db
       .insert(schema.appConfig)
-      .values({ key: "projects_base_path", value: body.projectsBasePath })
+      .values({ key: "projects_base_path", value: expandedPath })
       .onConflictDoUpdate({
         target: schema.appConfig.key,
-        set: { value: body.projectsBasePath },
+        set: { value: expandedPath },
       });
   }
   if (body.sendShortcut !== undefined) {
@@ -59,30 +75,103 @@ app.put("/api/config", async (c) => {
   return c.json({ ok: true });
 });
 
-// Browse: list dirs under base path only
+// Browse: list dirs under base path only (when configured), homedir (setup default), or filesystem root (setup unrestricted)
 app.get("/api/browse", async (c) => {
   const pathParam = c.req.query("path");
+  const setupUnrestricted = c.req.query("setup") === "1";
+  const { homedir } = await import("os");
   const rows = await db.select().from(schema.appConfig).where(eq(schema.appConfig.key, "projects_base_path"));
-  const basePath = rows[0]?.value ?? process.env.PROJECTS_BASE_PATH ?? "";
-  if (!basePath) return c.json({ error: "Base path not configured" }, 400);
+  let basePath = rows[0]?.value ?? process.env.PROJECTS_BASE_PATH ?? "";
+  if (!basePath) {
+    basePath = setupUnrestricted ? path.parse(homedir()).root : homedir();
+  }
+  if (basePath.startsWith("~")) {
+    basePath = path.join(homedir(), basePath.slice(1).replace(/^\/+/, "") || ".");
+  }
   const requested = pathParam ?? basePath;
-  const { realpathSync, readdirSync } = await import("fs");
+  const requestedExpanded = requested.startsWith("~")
+    ? path.join(homedir(), requested.slice(1).replace(/^\/+/, "") || ".")
+    : requested;
+  const { realpathSync, readdirSync, existsSync } = await import("fs");
   const entries: { name: string; isDir: boolean }[] = [];
   let resolved: string;
   try {
-    resolved = realpathSync(requested);
-  } catch {
-    return c.json({ error: "Path does not exist" }, 400);
+    if (!existsSync(requestedExpanded)) {
+      return c.json({ error: "Path does not exist" }, 400);
+    }
+    resolved = realpathSync(requestedExpanded);
+  } catch (err) {
+    return c.json({ error: "Path does not exist or is not accessible" }, 400);
   }
-  const baseResolved = realpathSync(basePath);
+  let baseResolved: string;
+  try {
+    baseResolved = realpathSync(basePath);
+  } catch {
+    return c.json({ error: "Base path does not exist" }, 400);
+  }
   if (!isPathUnderBase(resolved, baseResolved)) {
     return c.json({ error: "Path outside base directory" }, 400);
   }
-  for (const e of readdirSync(resolved, { withFileTypes: true })) {
-    if (e.isDirectory()) entries.push({ name: e.name, isDir: true });
+  try {
+    for (const e of readdirSync(resolved, { withFileTypes: true })) {
+      if (e.isDirectory()) entries.push({ name: e.name, isDir: true });
+    }
+  } catch {
+    return c.json({ error: "Cannot read directory" }, 400);
   }
   entries.sort((a, b) => a.name.localeCompare(b.name));
   return c.json({ entries });
+});
+
+// Create folder under base path (or homedir when not configured, or filesystem root when setup unrestricted)
+app.post("/api/browse/create", async (c) => {
+  const body = await c.req.json<{ parentPath: string; name: string; setup?: boolean }>();
+  const setupUnrestricted = body?.setup === true;
+  const parentPath = body?.parentPath?.trim();
+  const name = body?.name?.trim();
+  if (!parentPath || !name) return c.json({ error: "parentPath and name required" }, 400);
+  if (name.includes("/") || name.includes("\\") || name === ".." || name === ".") {
+    return c.json({ error: "Invalid folder name" }, 400);
+  }
+  const { homedir } = await import("os");
+  const rows = await db.select().from(schema.appConfig).where(eq(schema.appConfig.key, "projects_base_path"));
+  let basePath = rows[0]?.value ?? process.env.PROJECTS_BASE_PATH ?? "";
+  if (!basePath) {
+    basePath = setupUnrestricted ? path.parse(homedir()).root : homedir();
+  }
+  if (basePath.startsWith("~")) {
+    basePath = path.join(homedir(), basePath.slice(1).replace(/^\/+/, "") || ".");
+  }
+  const parentExpanded = parentPath.startsWith("~")
+    ? path.join(homedir(), parentPath.slice(1).replace(/^\/+/, "") || ".")
+    : parentPath;
+  const { realpathSync, mkdirSync, existsSync } = await import("fs");
+  let parentResolved: string;
+  try {
+    if (!existsSync(parentExpanded)) return c.json({ error: "Parent path does not exist" }, 400);
+    parentResolved = realpathSync(parentExpanded);
+  } catch {
+    return c.json({ error: "Parent path does not exist or is not accessible" }, 400);
+  }
+  let baseResolved: string;
+  try {
+    baseResolved = realpathSync(basePath);
+  } catch {
+    return c.json({ error: "Base path does not exist" }, 400);
+  }
+  if (!isPathUnderBase(parentResolved, baseResolved)) {
+    return c.json({ error: "Path outside base directory" }, 400);
+  }
+  const newDir = path.join(parentResolved, name);
+  if (!isPathUnderBase(newDir, baseResolved)) {
+    return c.json({ error: "Path outside base directory" }, 400);
+  }
+  try {
+    mkdirSync(newDir, { recursive: true });
+  } catch (err) {
+    return c.json({ error: (err as Error).message ?? "Failed to create folder" }, 400);
+  }
+  return c.json({ path: newDir });
 });
 
 // Projects CRUD
@@ -132,17 +221,25 @@ app.post("/api/projects", async (c) => {
     const { spawnSync } = await import("child_process");
     const result = spawnSync("git", ["clone", body.gitUrl.trim(), dir, ...(body.gitBranch ? ["-b", body.gitBranch] : [])], { stdio: "inherit" });
     if (result.status !== 0) return c.json({ error: "Git clone failed" }, 500);
-    await db.insert(schema.projects).values({
-      id,
-      slug: body.slug,
-      name: body.name,
-      path: dir,
-      sourceType: "git",
-      gitUrl: body.gitUrl.trim(),
-      gitBranch: body.gitBranch ?? null,
-      createdAt: now,
-      updatedAt: now,
-    });
+    try {
+      await db.insert(schema.projects).values({
+        id,
+        slug: body.slug,
+        name: body.name,
+        path: dir,
+        sourceType: "git",
+        gitUrl: body.gitUrl.trim(),
+        gitBranch: body.gitBranch ?? null,
+        createdAt: now,
+        updatedAt: now,
+      });
+    } catch (e) {
+      const err = e as { code?: string };
+      if (err.code === "SQLITE_CONSTRAINT_UNIQUE") {
+        return c.json({ error: "A project with this path or slug already exists." }, 400);
+      }
+      throw e;
+    }
   } else if (body.path) {
     const pathTrimmed = body.path.trim();
     const baseRows = await db.select().from(schema.appConfig).where(eq(schema.appConfig.key, "projects_base_path"));
@@ -158,17 +255,25 @@ app.post("/api/projects", async (c) => {
     if (!isPathUnderBase(resolvedPath, baseResolved)) {
       return c.json({ error: "Path must be within the configured base directory" }, 400);
     }
-    await db.insert(schema.projects).values({
-      id,
-      slug: body.slug,
-      name: body.name,
-      path: resolvedPath,
-      sourceType: "local",
-      gitUrl: null,
-      gitBranch: null,
-      createdAt: now,
-      updatedAt: now,
-    });
+    try {
+      await db.insert(schema.projects).values({
+        id,
+        slug: body.slug,
+        name: body.name,
+        path: resolvedPath,
+        sourceType: "local",
+        gitUrl: null,
+        gitBranch: null,
+        createdAt: now,
+        updatedAt: now,
+      });
+    } catch (e) {
+      const err = e as { code?: string };
+      if (err.code === "SQLITE_CONSTRAINT_UNIQUE") {
+        return c.json({ error: "A project with this path or slug already exists. Choose a different folder or slug." }, 400);
+      }
+      throw e;
+    }
   } else {
     return c.json({ error: "path or gitUrl required" }, 400);
   }
@@ -185,13 +290,24 @@ app.get("/api/projects/:projectId/chats", async (c) => {
 
 app.post("/api/projects/:projectId/chats", async (c) => {
   const projectId = c.req.param("projectId");
+  const projectRows = await db.select().from(schema.projects).where(eq(schema.projects.id, projectId));
+  if (projectRows.length === 0) return c.json({ error: "Project not found" }, 404);
+  const project = projectRows[0];
+
+  let sessionId: string | null = null;
+  try {
+    sessionId = await createCursorSession(project.path);
+  } catch (e) {
+    console.error("Failed to create Cursor session:", e);
+  }
+
   const id = nanoid();
   const now = new Date();
   await db.insert(schema.chats).values({
     id,
     projectId,
     title: null,
-    sessionId: null,
+    sessionId,
     createdAt: now,
     updatedAt: now,
   });
@@ -273,9 +389,13 @@ app.post("/api/chats/:id/messages", async (c) => {
 
   let sessionId: string | null = null;
   const assistantChunks: string[] = [];
+  let stderrBuffer = "";
 
   const stream = new ReadableStream({
     start(controller) {
+      proc.stderr?.on("data", (chunk: Buffer) => {
+        stderrBuffer += chunk.toString("utf-8");
+      });
       const onData = (chunk: Buffer) => {
         const text = chunk.toString("utf-8");
         const lines = text.split("\n").filter((l) => l.trim());
@@ -319,7 +439,11 @@ app.post("/api/chats/:id/messages", async (c) => {
           }
         })();
         if (code !== 0 && !sessionId && assistantChunks.length === 0) {
-          controller.enqueue(new TextEncoder().encode(JSON.stringify({ type: "error", error: `Cursor CLI exited with code ${code}` }) + "\n"));
+          const stderrTrimmed = stderrBuffer.trim();
+          const detail = stderrTrimmed
+            ? `Cursor CLI exited with code ${code}. stderr: ${stderrTrimmed.slice(0, 2000)}`
+            : `Cursor CLI exited with code ${code}`;
+          controller.enqueue(new TextEncoder().encode(JSON.stringify({ type: "error", error: detail }) + "\n"));
         }
         controller.close();
       });
