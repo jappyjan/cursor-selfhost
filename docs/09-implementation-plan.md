@@ -63,39 +63,39 @@ Ordered tasks for the first MVP. Work through in sequence; some items can be par
 
 ## Phase 6: Frontend — First-Run & Setup
 
-- [ ] **6.1** First-run: if base dir not set, redirect to `/setup`
-- [ ] **6.2** Setup page: full-page form; base dir input; persist via API; redirect to main app
+- [x] **6.1** First-run: if base dir not set, redirect to `/setup`
+- [x] **6.2** Setup page: full-page form; base dir input; persist via API; redirect to main app
 
 ---
 
 ## Phase 7: Frontend — Create Project
 
-- [ ] **7.1** Create wizard: inline in main area; step 1: Local vs Git
-- [ ] **7.2** Local: FolderPicker (browse API + manual path); restricted to base dir
-- [ ] **7.3** Git: URL + branch input; clone progress indicator
-- [ ] **7.4** Project name + slug inputs (auto from path/git, suffix if duplicate); user-editable
-- [ ] **7.5** On create: call API; redirect to `/p/:slug/c/:chatId` (new chat)
+- [x] **7.1** Create wizard: inline in main area; step 1: Local vs Git
+- [x] **7.2** Local: FolderPicker (browse API + manual path); restricted to base dir
+- [x] **7.3** Git: URL + branch input; clone progress indicator
+- [x] **7.4** Project name + slug inputs (auto from path/git, suffix if duplicate); user-editable
+- [x] **7.5** On create: call API; redirect to `/p/:slug/c/:chatId` (new chat)
 
 ---
 
 ## Phase 8: Frontend — Chat View
 
-- [ ] **8.1** Chat view: load messages; full-width message blocks
-- [ ] **8.2** User messages: accent bar + tint; agent: neutral; icons
-- [ ] **8.3** Code blocks: Shiki syntax highlight, copy button, language label
+- [x] **8.1** Chat view: load messages; full-width message blocks
+- [x] **8.2** User messages: accent bar + tint; agent: neutral; icons
+- [x] **8.3** Code blocks: Shiki syntax highlight, copy button, language label
 - [ ] **8.4** Diff view: when applicable (e.g. file change blocks)
-- [ ] **8.5** Input: multi-line textarea, send button inside; configurable shortcut (Enter/Shift+Enter/Ctrl+Enter)
-- [ ] **8.6** Header: "Project › Chat"; three-dot menu (rename, delete)
+- [x] **8.5** Input: multi-line textarea, send button inside; configurable shortcut (Enter/Shift+Enter/Ctrl+Enter)
+- [x] **8.6** Header: "Project › Chat"; three-dot menu (rename, delete)
 
 ---
 
 ## Phase 9: Frontend — Streaming & Integration
 
-- [ ] **9.1** Send message: POST to streaming endpoint; use `fetch` + `ReadableStream`
-- [ ] **9.2** Append chunks to assistant message block in real time
-- [ ] **9.3** Disable input while streaming; re-enable when done
-- [ ] **9.4** Error states: inline error block with Retry; toast for transient errors
-- [ ] **9.5** Auth instructions: inline block when not logged in
+- [x] **9.1** Send message: POST to streaming endpoint; use `fetch` + `ReadableStream`
+- [x] **9.2** Append chunks to assistant message block in real time
+- [x] **9.3** Disable input while streaming; re-enable when done
+- [x] **9.4** Error states: inline error block with Retry; toast for transient errors
+- [x] **9.5** Auth instructions: inline block when not logged in
 
 ---
 

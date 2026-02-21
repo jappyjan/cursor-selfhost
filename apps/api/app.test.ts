@@ -84,12 +84,17 @@ describe("API", () => {
     });
 
     it("POST /api/projects creates local project", async () => {
+      await fetch("/api/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectsBasePath: "/tmp" }),
+      });
       const res = await fetch("/api/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           sourceType: "local",
-          path: "/tmp/test-project",
+          path: "/tmp",
           name: "Test Project",
           slug: "test-project",
         }),
@@ -98,7 +103,8 @@ describe("API", () => {
       const json = await res.json();
       expect(json.slug).toBe("test-project");
       expect(json.name).toBe("Test Project");
-      expect(json.path).toBe("/tmp/test-project");
+      expect(json.path).toBeDefined();
+      expect(json.path).toContain("tmp");
       expect(json.sourceType).toBe("local");
     });
 
@@ -112,6 +118,38 @@ describe("API", () => {
     it("GET /api/projects/:id returns 404 for unknown id", async () => {
       const res = await fetch("/api/projects/unknown-id");
       expect(res.status).toBe(404);
+    });
+
+    it("POST /api/projects rejects path outside base", async () => {
+      const res = await fetch("/api/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sourceType: "local",
+          path: "/etc",
+          name: "Bad",
+          slug: "bad",
+        }),
+      });
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.error).toContain("within");
+    });
+
+    it("POST /api/projects rejects invalid slug", async () => {
+      const res = await fetch("/api/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sourceType: "local",
+          path: "/tmp",
+          name: "Test",
+          slug: "invalid slug!",
+        }),
+      });
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.error).toContain("Slug");
     });
   });
 
@@ -139,6 +177,23 @@ describe("API", () => {
       expect(res.status).toBe(200);
       const json = await res.json();
       expect(Array.isArray(json)).toBe(true);
+    });
+
+    it("DELETE /api/chats/:id deletes chat", async () => {
+      const createRes = await fetch(`/api/projects/${projectId}/chats`, {
+        method: "POST",
+      });
+      const created = await createRes.json();
+      const chatId = created.id;
+      const res = await fetch(`/api/chats/${chatId}`, { method: "DELETE" });
+      expect(res.status).toBe(200);
+      const getRes = await fetch(`/api/chats/${chatId}`);
+      expect(getRes.status).toBe(404);
+    });
+
+    it("DELETE /api/chats/:id returns 404 for unknown chat", async () => {
+      const res = await fetch("/api/chats/unknown-chat-id", { method: "DELETE" });
+      expect(res.status).toBe(404);
     });
   });
 

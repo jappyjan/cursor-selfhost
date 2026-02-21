@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { eq, desc } from "drizzle-orm";
+import path from "path";
 import { db } from "@cursor-selfhost/db";
 import * as schema from "@cursor-selfhost/db/schema";
 import { nanoid } from "nanoid";
@@ -9,6 +10,11 @@ import {
   parseCursorLine,
   extractTextFromLine,
 } from "./src/cursor-cli";
+import {
+  createProjectSchema,
+  isPathUnderBase,
+  isValidGitUrl,
+} from "./src/validation";
 
 export const app = new Hono();
 
@@ -69,7 +75,7 @@ app.get("/api/browse", async (c) => {
     return c.json({ error: "Path does not exist" }, 400);
   }
   const baseResolved = realpathSync(basePath);
-  if (!resolved.startsWith(baseResolved)) {
+  if (!isPathUnderBase(resolved, baseResolved)) {
     return c.json({ error: "Path outside base directory" }, 400);
   }
   for (const e of readdirSync(resolved, { withFileTypes: true })) {
@@ -100,16 +106,31 @@ app.get("/api/projects/:id", async (c) => {
 });
 
 app.post("/api/projects", async (c) => {
-  const body = await c.req.json<{ sourceType: string; path?: string; gitUrl?: string; gitBranch?: string; name: string; slug: string }>();
+  const raw = await c.req.json();
+  const parsed = createProjectSchema.safeParse(raw);
+  if (!parsed.success) {
+    const msg = parsed.error.message ?? "Validation failed";
+    return c.json({ error: msg }, 400);
+  }
+  const body = parsed.data;
   const id = nanoid();
   const now = new Date();
+  const { realpathSync } = await import("fs");
+
   if (body.sourceType === "git" && body.gitUrl) {
+    if (!isValidGitUrl(body.gitUrl)) {
+      return c.json({ error: "Invalid git URL format" }, 400);
+    }
     const baseRows = await db.select().from(schema.appConfig).where(eq(schema.appConfig.key, "projects_base_path"));
     const base = baseRows[0]?.value ?? "";
     if (!base) return c.json({ error: "Base path not configured" }, 400);
+    const baseResolved = realpathSync(base);
+    const dir = path.join(baseResolved, `${body.slug}-${id.slice(0, 8)}`);
+    if (!isPathUnderBase(dir, baseResolved)) {
+      return c.json({ error: "Invalid project path" }, 400);
+    }
     const { spawnSync } = await import("child_process");
-    const dir = `${base}/${body.slug}-${id.slice(0, 8)}`;
-    const result = spawnSync("git", ["clone", body.gitUrl, dir, ...(body.gitBranch ? ["-b", body.gitBranch] : [])], { stdio: "inherit" });
+    const result = spawnSync("git", ["clone", body.gitUrl.trim(), dir, ...(body.gitBranch ? ["-b", body.gitBranch] : [])], { stdio: "inherit" });
     if (result.status !== 0) return c.json({ error: "Git clone failed" }, 500);
     await db.insert(schema.projects).values({
       id,
@@ -117,17 +138,31 @@ app.post("/api/projects", async (c) => {
       name: body.name,
       path: dir,
       sourceType: "git",
-      gitUrl: body.gitUrl,
+      gitUrl: body.gitUrl.trim(),
       gitBranch: body.gitBranch ?? null,
       createdAt: now,
       updatedAt: now,
     });
   } else if (body.path) {
+    const pathTrimmed = body.path.trim();
+    const baseRows = await db.select().from(schema.appConfig).where(eq(schema.appConfig.key, "projects_base_path"));
+    const base = baseRows[0]?.value ?? process.env.PROJECTS_BASE_PATH ?? "";
+    if (!base) return c.json({ error: "Base path not configured" }, 400);
+    let resolvedPath: string;
+    try {
+      resolvedPath = realpathSync(pathTrimmed);
+    } catch {
+      return c.json({ error: "Path does not exist" }, 400);
+    }
+    const baseResolved = realpathSync(base);
+    if (!isPathUnderBase(resolvedPath, baseResolved)) {
+      return c.json({ error: "Path must be within the configured base directory" }, 400);
+    }
     await db.insert(schema.projects).values({
       id,
       slug: body.slug,
       name: body.name,
-      path: body.path,
+      path: resolvedPath,
       sourceType: "local",
       gitUrl: null,
       gitBranch: null,
@@ -180,6 +215,15 @@ app.patch("/api/chats/:id", async (c) => {
   await db.update(schema.chats).set(updates as Record<string, Date | string | null>).where(eq(schema.chats.id, id));
   const rows = await db.select().from(schema.chats).where(eq(schema.chats.id, id));
   return c.json(rows[0]);
+});
+
+app.delete("/api/chats/:id", async (c) => {
+  const id = c.req.param("id");
+  const rows = await db.select().from(schema.chats).where(eq(schema.chats.id, id));
+  if (rows.length === 0) return c.json({ error: "Not found" }, 404);
+  await db.delete(schema.messages).where(eq(schema.messages.chatId, id));
+  await db.delete(schema.chats).where(eq(schema.chats.id, id));
+  return c.json({ ok: true });
 });
 
 // Messages

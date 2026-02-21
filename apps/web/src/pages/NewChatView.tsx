@@ -3,7 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { createChat, fetchProjectBySlug } from "@/lib/api";
 
-export function NewChatView() {
+export default function NewChatView() {
   const { slug } = useParams<{ slug: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
