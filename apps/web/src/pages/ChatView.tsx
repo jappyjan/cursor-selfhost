@@ -9,8 +9,9 @@ import {
   updateChat,
   deleteChat,
   fetchCursorStatus,
+  type MessageBlock,
 } from "@/lib/api";
-import { MessageContent } from "@/components/MessageContent";
+import { MessageContent, TypingIndicator } from "@/components/MessageContent";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -52,8 +53,7 @@ export function ChatView() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [input, setInput] = useState("");
-  const [streamingContent, setStreamingContent] = useState("");
-  const [streamingActivities, setStreamingActivities] = useState<{ kind: string; label: string }[]>([]);
+  const [streamingBlocks, setStreamingBlocks] = useState<MessageBlock[]>([]);
   const [sendError, setSendError] = useState<string | null>(null);
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameTitle, setRenameTitle] = useState("");
@@ -85,32 +85,47 @@ export function ChatView() {
   const sendMutation = useMutation({
     mutationFn: async ({ content, targetChatId }: { content: string; targetChatId: string }) => {
       setSendError(null);
-      setStreamingContent("");
-      setStreamingActivities([]);
+      setStreamingBlocks([]);
       await sendMessageStreaming(targetChatId, content, (chunk) => {
+        if (chunk.type === "block") {
+          setStreamingBlocks((prev) => {
+            const block = chunk.block;
+            if (block.type === "activity") return [...prev, block];
+            if (block.type === "text") {
+              const last = prev[prev.length - 1];
+              if (last?.type === "text") {
+                return [...prev.slice(0, -1), { type: "text" as const, content: last.content + block.content }];
+              }
+              return [...prev, block];
+            }
+            return prev;
+          });
+        }
         if (chunk.type === "chunk") {
-          setStreamingContent((prev) => prev + chunk.content);
+          setStreamingBlocks((prev) => {
+            const last = prev[prev.length - 1];
+            if (last?.type === "text") return [...prev.slice(0, -1), { type: "text" as const, content: last.content + chunk.content }];
+            return [...prev, { type: "text" as const, content: chunk.content }];
+          });
         }
         if (chunk.type === "activity") {
-          setStreamingActivities((prev) => [...prev, { kind: chunk.kind, label: chunk.label }]);
+          setStreamingBlocks((prev) => [...prev, { type: "activity" as const, kind: chunk.kind, label: chunk.label }]);
         }
-        if (chunk.type === "error") {
-          setSendError(chunk.error);
-        }
+        if (chunk.type === "error") setSendError(chunk.error);
       });
     },
-    onSuccess: (_data, { targetChatId }) => {
-      queryClient.invalidateQueries({ queryKey: ["messages", targetChatId] });
-      queryClient.invalidateQueries({ queryKey: ["chat", targetChatId] });
-      queryClient.invalidateQueries({ queryKey: ["chats"] });
-      setStreamingContent("");
-      setStreamingActivities([]);
+    onSuccess: async (_data, { targetChatId }) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["messages", targetChatId] }),
+        queryClient.invalidateQueries({ queryKey: ["chat", targetChatId] }),
+        queryClient.invalidateQueries({ queryKey: ["chats"] }),
+      ]);
+      setStreamingBlocks([]);
       if (sendingToChatIdRef.current === targetChatId) sendingToChatIdRef.current = null;
     },
     onError: (err, { targetChatId }) => {
       setSendError((err as Error).message);
-      setStreamingContent("");
-      setStreamingActivities([]);
+      setStreamingBlocks([]);
       if (sendingToChatIdRef.current === targetChatId) sendingToChatIdRef.current = null;
     },
   });
@@ -163,38 +178,119 @@ export function ChatView() {
       });
   }, [chatId, slug, navigate, queryClient]);
 
-  const displayMessages = [...messages];
+  type DisplayItem =
+    | { type: "user"; messageId: string; content: string }
+    | { type: "assistant"; messageId: string; block: MessageBlock; isPulsing?: boolean }
+    | { type: "assistant_legacy"; messageId: string; content: string; activities: { kind: string; label: string }[] | null };
+
   const isViewingSendingChat = chatId && sendingToChatIdRef.current === chatId;
-  // Only show streaming/optimistic UI when viewing the chat that initiated the send
-  if (isViewingSendingChat && isStreaming && lastSentRef.current) {
-    const lastSent = lastSentRef.current;
-    const alreadyHasUserMessage = messages.some(
-      (m) => m.role === "user" && m.content === lastSent
-    );
-    if (!alreadyHasUserMessage) {
-      displayMessages.push({
-        id: "__pending_user__",
-        chatId: chatId!,
-        role: "user",
-        content: lastSent,
-        createdAt: new Date().toISOString(),
-      });
+
+  /** Collapse consecutive thinking blocks into one; pulse only while still receiving thinking (no next item yet). */
+  function collapseThinkingItems(items: DisplayItem[]): DisplayItem[] {
+    const result: DisplayItem[] = [];
+    let thinkingRun: DisplayItem[] = [];
+
+    const flushThinking = (pulsing: boolean) => {
+      if (thinkingRun.length === 0) return;
+      const first = thinkingRun[0];
+      if (first.type === "assistant" && first.block.type === "activity") {
+        result.push({ ...first, isPulsing: pulsing });
+      }
+      thinkingRun = [];
+    };
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      const isThinking =
+        item.type === "assistant" &&
+        item.block.type === "activity" &&
+        item.block.kind === "thinking";
+
+      if (isThinking) {
+        thinkingRun.push(item);
+        continue;
+      }
+      flushThinking(false);
+      result.push(item);
     }
+    flushThinking(isStreaming);
+    return result;
   }
-  const showStreamingActivities = isViewingSendingChat && isStreaming && streamingActivities.length > 0;
-  if (isViewingSendingChat && (streamingContent || showStreamingActivities)) {
-    displayMessages.push({
-      id: "__streaming__",
-      chatId: chatId!,
-      role: "assistant",
-      content: streamingContent || "",
-      createdAt: new Date().toISOString(),
+
+  function parseBlocks(m: (typeof messages)[0]): MessageBlock[] | null {
+    if (Array.isArray(m.blocks)) return m.blocks;
+    if (typeof m.blocks === "string" && m.blocks) {
+      try {
+        const parsed = JSON.parse(m.blocks);
+        return Array.isArray(parsed) ? parsed : null;
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  function parseActivities(m: (typeof messages)[0]): { kind: string; label: string }[] | null {
+    if (Array.isArray(m.activities)) return m.activities;
+    if (typeof m.activities === "string" && m.activities) {
+      try {
+        const parsed = JSON.parse(m.activities);
+        return Array.isArray(parsed) ? parsed : null;
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  const displayItems: DisplayItem[] = [];
+  for (const m of messages) {
+    if (m.role === "user") {
+      displayItems.push({ type: "user", messageId: m.id, content: m.content });
+      continue;
+    }
+    const blocks = parseBlocks(m);
+    if (blocks && blocks.length > 0) {
+      for (const block of blocks) {
+        displayItems.push({ type: "assistant", messageId: m.id, block });
+      }
+      continue;
+    }
+    displayItems.push({
+      type: "assistant_legacy",
+      messageId: m.id,
+      content: m.content,
+      activities: parseActivities(m),
     });
   }
 
+  if (isViewingSendingChat && isStreaming && lastSentRef.current) {
+    const lastSent = lastSentRef.current;
+    const alreadyHasUserMessage = messages.some((m) => m.role === "user" && m.content === lastSent);
+    if (!alreadyHasUserMessage) {
+      displayItems.push({ type: "user", messageId: "__pending_user__", content: lastSent });
+    }
+  }
+
+  if (isViewingSendingChat && isStreaming) {
+    if (streamingBlocks.length > 0) {
+      for (const block of streamingBlocks) {
+        displayItems.push({ type: "assistant", messageId: "__streaming__", block });
+      }
+    } else {
+      displayItems.push({
+        type: "assistant",
+        messageId: "__streaming__",
+        block: { type: "text", content: "" },
+      });
+    }
+  }
+
+  const collapsedItems = collapseThinkingItems(displayItems);
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length, streamingContent, isStreaming]);
+  }, [messages.length, streamingBlocks.length, isStreaming]);
 
   if (error || !chat) {
     return (
@@ -230,7 +326,7 @@ export function ChatView() {
 
       {/* Messages area */}
       <div className="flex-1 overflow-y-auto p-6">
-        <div className="mx-auto max-w-3xl space-y-6">
+        <div className="mx-auto max-w-3xl space-y-3">
           {!isCursorLoggedIn && (
             <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 p-4">
               <div className="flex items-start gap-3">
@@ -248,7 +344,7 @@ export function ChatView() {
             </div>
           )}
 
-          {displayMessages.length === 0 && !streamingContent ? (
+          {displayItems.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-center">
               <p className="text-muted-foreground">
                 No messages yet. Send a message to start the conversation.
@@ -256,50 +352,92 @@ export function ChatView() {
             </div>
           ) : (
             <>
-              {displayMessages.map((m) => (
-                <div key={m.id}>
-                  {showStreamingActivities && m.id === "__streaming__" && (
-                    <div className="mb-2 flex flex-wrap gap-2">
-                      {streamingActivities.map((a, i) => (
-                        <span
-                          key={i}
-                          className="inline-flex items-center rounded px-2 py-0.5 text-xs text-muted-foreground/80"
-                          title={a.kind}
-                        >
-                          {a.label}
-                        </span>
-                      ))}
+              {collapsedItems.map((item, idx) => {
+                if (item.type === "user") {
+                  return (
+                    <div
+                      key={`${item.messageId}-${idx}`}
+                      className="rounded-lg border-l-4 border-primary/50 bg-accent/50 p-4"
+                    >
+                      <div className="flex items-center gap-2">
+                        <User className="h-4 w-4 shrink-0 text-muted-foreground" />
+                        <p className="text-sm font-medium text-muted-foreground">You</p>
+                      </div>
+                      <div className="mt-2">
+                        <MessageContent content={item.content} />
+                      </div>
                     </div>
-                  )}
+                  );
+                }
+                if (item.type === "assistant_legacy") {
+                  return (
+                    <div key={`${item.messageId}-${idx}`}>
+                      {item.activities && item.activities.length > 0 && (
+                        <div className="mb-1 space-y-0.5">
+                          {item.activities.map((a, i) => (
+                            <div
+                              key={i}
+                              className="text-xs text-muted-foreground/80"
+                              title={a.kind}
+                            >
+                              {a.label}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div className="rounded-lg bg-muted/30 p-4">
+                        <div className="flex items-center gap-2">
+                          <Bot className="h-4 w-4 shrink-0 text-muted-foreground" />
+                          <p className="text-sm font-medium text-muted-foreground">Assistant</p>
+                        </div>
+                        <div className="mt-2">
+                          <MessageContent content={item.content} />
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
+                if (item.block.type === "activity") {
+                  const pulsing = "isPulsing" in item && item.isPulsing;
+                  return (
+                    <div
+                      key={`${item.messageId}-${idx}`}
+                      className="text-xs text-muted-foreground/80 py-0"
+                      title={item.block.kind}
+                    >
+                      {item.block.kind === "thinking" && pulsing ? (
+                        <TypingIndicator />
+                      ) : (
+                        item.block.label
+                      )}
+                    </div>
+                  );
+                }
+                return (
                   <div
+                    key={`${item.messageId}-${idx}`}
                     className={cn(
-                      "rounded-lg p-4",
-                      m.role === "user"
-                        ? "border-l-4 border-primary/50 bg-accent/50"
-                        : "bg-muted/30",
-                      m.id === "__streaming__" && !m.content && "animate-pulse"
+                      "rounded-lg bg-muted/30 p-4",
+                      item.messageId === "__streaming__" && !item.block.content && "animate-pulse"
                     )}
                   >
                     <div className="flex items-center gap-2">
-                      {m.role === "user" ? (
-                        <User className="h-4 w-4 shrink-0 text-muted-foreground" />
-                      ) : (
-                        <Bot className="h-4 w-4 shrink-0 text-muted-foreground" />
-                      )}
-                      <p className="text-sm font-medium text-muted-foreground">
-                        {m.role === "user" ? "You" : "Assistant"}
-                      </p>
+                      <Bot className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <p className="text-sm font-medium text-muted-foreground">Assistant</p>
                     </div>
                     <div className="mt-2">
-                      {m.content ? (
-                        <MessageContent content={m.content} />
-                      ) : m.id === "__streaming__" ? (
+                      {item.block.content ? (
+                        <MessageContent
+                          content={item.block.content}
+                          isStreaming={item.messageId === "__streaming__" && isStreaming}
+                        />
+                      ) : item.messageId === "__streaming__" ? (
                         <span className="text-muted-foreground">Processing…</span>
                       ) : null}
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </>
           )}
           <div ref={messagesEndRef} />

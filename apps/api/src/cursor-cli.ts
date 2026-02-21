@@ -38,6 +38,7 @@ export function spawnCursorAgent(
     "--workspace",
     options.workspace,
     "--trust",
+    "--force", // auto-allow tool calls (replaces deprecated --auto)
   ];
   if (options.resumeSessionId) {
     args.push("--resume", options.resumeSessionId);

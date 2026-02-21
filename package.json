@@ -10,7 +10,11 @@
     "db:generate": "pnpm --filter db generate",
     "test": "pnpm run test:api && pnpm --filter db test",
     "test:api": "pnpm --filter api test",
-    "test:e2e": "RUN_E2E_WITH_REAL_CURSOR=1 pnpm --filter api test"
+    "test:e2e": "RUN_E2E_WITH_REAL_CURSOR=1 pnpm --filter api test",
+    "start": "pnpm run start:api & pnpm run start:web",
+    "start:api": "pnpm --filter api start",
+    "start:web": "pnpm --filter web build && pnpm --filter web preview",
+    "restart": "./scripts/restart.sh"
   },
   "devDependencies": {
     "typescript": "^5.7.2"

@@ -67,19 +67,40 @@ function main() {
       })
     );
 
-    // 5. Assistant text chunks (SHOULD be streamed — must NOT stream result to avoid duplication)
-    const assistantReply = `[ASSISTANT_REPLY] Response to your message.`;
+    // 5. First assistant text chunk
+    const part1 = `[ASSISTANT_REPLY] First part. `;
     process.stdout.write(
       ndjson({
         type: "assistant",
-        message: { content: [{ type: "text", text: assistantReply }] },
+        message: { content: [{ type: "text", text: part1 }] },
         session_id: sessionId,
       })
     );
 
-    // 6. Final result (do NOT stream — duplicates assistant content; use only for done/session_id)
+    // 6. Another tool call (interleaved)
     process.stdout.write(
-      ndjson({ type: "result", result: assistantReply, session_id: sessionId })
+      ndjson({
+        type: "tool_call",
+        message: {
+          content: [{ type: "text", text: "[Tool: search path=/tmp]" }],
+        },
+        session_id: sessionId,
+      })
+    );
+
+    // 7. Second assistant text chunk
+    const part2 = `Second part. Response to your message.`;
+    process.stdout.write(
+      ndjson({
+        type: "assistant",
+        message: { content: [{ type: "text", text: part2 }] },
+        session_id: sessionId,
+      })
+    );
+
+    // 8. Final result (do NOT stream — duplicates assistant content; use only for done/session_id)
+    process.stdout.write(
+      ndjson({ type: "result", result: part1 + part2, session_id: sessionId })
     );
 
     process.exit(0);

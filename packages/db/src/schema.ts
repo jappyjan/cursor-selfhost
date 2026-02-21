@@ -35,6 +35,10 @@ export const messages = sqliteTable("messages", {
   role: text("role").notNull(),
   content: text("content").notNull(),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  /** JSON array of { kind, label } for tool_call, thinking, etc. (legacy) */
+  activities: text("activities"),
+  /** JSON array of ordered blocks: { type: "text", content } | { type: "activity", kind, label } */
+  blocks: text("blocks"),
 });
 
 export const appConfig = sqliteTable("app_config", {

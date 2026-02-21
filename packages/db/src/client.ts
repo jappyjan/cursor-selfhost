@@ -5,13 +5,17 @@ import { eq } from "drizzle-orm";
 import * as schema from "./schema";
 import path from "path";
 import { fileURLToPath } from "url";
+import { mkdirSync, existsSync } from "fs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 function getDbPath(): string {
   const env = process.env.DATABASE_PATH;
   if (env) return env;
-  return path.join(__dirname, "..", "data", "cursor-selfhost.sqlite");
+  const defaultPath = path.join(__dirname, "..", "data", "cursor-selfhost.sqlite");
+  const dir = path.dirname(defaultPath);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  return defaultPath;
 }
 
 const dbPath = getDbPath();

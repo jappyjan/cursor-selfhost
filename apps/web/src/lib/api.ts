@@ -36,6 +36,10 @@ export type Message = {
   role: "user" | "assistant";
   content: string;
   createdAt: string;
+  /** Parsed from JSON; API may return string (legacy) */
+  activities?: { kind: string; label: string }[] | string | null;
+  /** Parsed from JSON; ordered blocks for interleaved text + activities */
+  blocks?: MessageBlock[] | string | null;
 };
 
 export type CursorStatus = { ok: boolean; error?: string };
@@ -171,7 +175,12 @@ export async function deleteChat(chatId: string): Promise<void> {
   if (!res.ok) throw new Error("Failed to delete chat");
 }
 
+export type MessageBlock =
+  | { type: "text"; content: string }
+  | { type: "activity"; kind: string; label: string };
+
 export type StreamChunk =
+  | { type: "block"; block: MessageBlock }
   | { type: "chunk"; content: string }
   | { type: "activity"; kind: string; label: string }
   | { type: "done"; sessionId: string | null }
@@ -182,7 +191,15 @@ export async function sendMessageStreaming(
   content: string,
   onChunk: (chunk: StreamChunk) => void
 ): Promise<void> {
-  type ParsedChunk = { type: string; content?: string; kind?: string; label?: string; sessionId?: string | null; error?: string };
+  type ParsedChunk = {
+    type: string;
+    content?: string;
+    kind?: string;
+    label?: string;
+    sessionId?: string | null;
+    error?: string;
+    block?: MessageBlock;
+  };
   const res = await fetch(`${API_BASE}/chats/${chatId}/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -206,7 +223,8 @@ export async function sendMessageStreaming(
       if (!line.trim()) continue;
       try {
         const parsed = JSON.parse(line) as ParsedChunk;
-        if (parsed.type === "chunk") onChunk({ type: "chunk", content: parsed.content ?? "" });
+        if (parsed.type === "block" && parsed.block) onChunk({ type: "block", block: parsed.block });
+        else if (parsed.type === "chunk") onChunk({ type: "chunk", content: parsed.content ?? "" });
         else if (parsed.type === "activity") onChunk({ type: "activity", kind: parsed.kind ?? "", label: parsed.label ?? "" });
         else if (parsed.type === "done") onChunk({ type: "done", sessionId: parsed.sessionId ?? null });
         else if (parsed.type === "error") onChunk({ type: "error", error: parsed.error ?? "" });
@@ -218,7 +236,8 @@ export async function sendMessageStreaming(
   if (buffer.trim()) {
     try {
       const parsed = JSON.parse(buffer) as ParsedChunk;
-      if (parsed.type === "chunk") onChunk({ type: "chunk", content: parsed.content ?? "" });
+      if (parsed.type === "block" && parsed.block) onChunk({ type: "block", block: parsed.block });
+      else if (parsed.type === "chunk") onChunk({ type: "chunk", content: parsed.content ?? "" });
       else if (parsed.type === "activity") onChunk({ type: "activity", kind: parsed.kind ?? "", label: parsed.label ?? "" });
       else if (parsed.type === "done") onChunk({ type: "done", sessionId: parsed.sessionId ?? null });
       else if (parsed.type === "error") onChunk({ type: "error", error: parsed.error ?? "" });

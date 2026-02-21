@@ -389,7 +389,8 @@ app.post("/api/chats/:id/messages", async (c) => {
   });
 
   let sessionId: string | null = null;
-  const assistantChunks: string[] = [];
+  type Block = { type: "text"; content: string } | { type: "activity"; kind: string; label: string };
+  const blocks: Block[] = [];
   let resultContent: string | null = null; // fallback when Cursor sends only result (no assistant chunks)
   let stderrBuffer = "";
 
@@ -405,11 +406,14 @@ app.post("/api/chats/:id/messages", async (c) => {
           /* stream may be closed */
         }
       };
+      let streamClosed = false;
       const safeClose = () => {
+        if (streamClosed) return;
+        streamClosed = true;
         try {
           controller.close();
         } catch {
-          /* stream may be closed */
+          /* already closed */
         }
       };
       const onData = (chunk: Buffer) => {
@@ -419,18 +423,24 @@ app.post("/api/chats/:id/messages", async (c) => {
           const parsed = parseCursorLine(line);
           if (!parsed) continue;
           if (parsed.session_id) sessionId = parsed.session_id;
-          // Activity (tool_call, thinking): emit for UI, do not add to assistant content
+          // Activity (tool_call, thinking): add block, emit for UI
           if (isActivityContent(parsed)) {
             const label = extractActivityLabel(parsed);
-            safeEnqueue(new TextEncoder().encode(JSON.stringify({ type: "activity", kind: parsed.type, label }) + "\n"));
+            blocks.push({ type: "activity", kind: parsed.type, label });
+            safeEnqueue(new TextEncoder().encode(JSON.stringify({ type: "block", block: { type: "activity", kind: parsed.type, label } }) + "\n"));
             continue;
           }
-          // Assistant chunks only — do NOT stream result (avoids duplication)
+          // Assistant chunks: append to last text block or create new one
           if (isAssistantContent(parsed)) {
             const extracted = extractTextFromLine(parsed);
             if (extracted) {
-              assistantChunks.push(extracted);
-              safeEnqueue(new TextEncoder().encode(JSON.stringify({ type: "chunk", content: extracted }) + "\n"));
+              const last = blocks[blocks.length - 1];
+              if (last?.type === "text") {
+                last.content += extracted;
+              } else {
+                blocks.push({ type: "text", content: extracted });
+              }
+              safeEnqueue(new TextEncoder().encode(JSON.stringify({ type: "block", block: { type: "text", content: extracted } }) + "\n"));
             }
             continue;
           }
@@ -446,38 +456,39 @@ app.post("/api/chats/:id/messages", async (c) => {
         }
       };
       proc.stdout?.on("data", onData);
-      proc.on("close", (code) => {
-        const fullContent = assistantChunks.length > 0 ? assistantChunks.join("") : (resultContent ?? "");
-        // Persist assistant message and session_id (async, fire-and-forget)
-        (async () => {
-          try {
-            if (fullContent) {
-              await db.insert(schema.messages).values({
-                id: nanoid(),
-                chatId,
-                role: "assistant",
-                content: fullContent,
-                createdAt: new Date(),
-              });
-            }
-            if (sessionId) {
-              await db.update(schema.chats).set({ sessionId, updatedAt: new Date() }).where(eq(schema.chats.id, chatId));
-            }
-          } catch (e) {
-            const err = e as { code?: string };
-            if (err.code === "SQLITE_CONSTRAINT_FOREIGNKEY") {
-              // Chat may have been deleted before persist completed (e.g. in tests)
-              return;
-            }
-            console.error("Failed to persist assistant message:", e);
-          }
-        })();
-        if (code !== 0 && !sessionId && assistantChunks.length === 0) {
+      proc.on("close", async (code) => {
+        const textBlocks = blocks.filter((b): b is { type: "text"; content: string } => b.type === "text");
+        const fullContent = textBlocks.length > 0 ? textBlocks.map((b) => b.content).join("") : (resultContent ?? "");
+        if (code !== 0 && !sessionId && textBlocks.length === 0) {
           const stderrTrimmed = stderrBuffer.trim();
           const detail = stderrTrimmed
             ? `Cursor CLI exited with code ${code}. stderr: ${stderrTrimmed.slice(0, 2000)}`
             : `Cursor CLI exited with code ${code}`;
           safeEnqueue(new TextEncoder().encode(JSON.stringify({ type: "error", error: detail }) + "\n"));
+        }
+        try {
+          if (fullContent || blocks.length > 0) {
+            const blocksJson = blocks.length > 0 ? JSON.stringify(blocks) : null;
+            await db.insert(schema.messages).values({
+              id: nanoid(),
+              chatId,
+              role: "assistant",
+              content: fullContent || "",
+              createdAt: new Date(),
+              activities: null,
+              blocks: blocksJson,
+            });
+          }
+          if (sessionId) {
+            await db.update(schema.chats).set({ sessionId, updatedAt: new Date() }).where(eq(schema.chats.id, chatId));
+          }
+        } catch (e) {
+          const err = e as { code?: string };
+          if (err.code === "SQLITE_CONSTRAINT_FOREIGNKEY") {
+            // Chat may have been deleted before persist completed (e.g. in tests)
+          } else {
+            console.error("Failed to persist assistant message:", e);
+          }
         }
         safeClose();
       });

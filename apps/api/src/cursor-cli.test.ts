@@ -88,7 +88,7 @@ describe("extractActivityLabel", () => {
   });
   it("truncates long text", () => {
     const long = "x".repeat(80);
-    expect(extractActivityLabel({ type: "tool_result", message: { content: [{ text: long }] } })).toHaveLength(63);
+    expect(extractActivityLabel({ type: "tool_result", message: { content: [{ text: long }] } })).toHaveLength(61);
     expect(extractActivityLabel({ type: "tool_result", message: { content: [{ text: long }] } })).toMatch(/…$/);
   });
 });
@@ -195,12 +195,12 @@ describe("spawnCursorAgent", () => {
     expect(args).not.toContain("--resume");
   });
 
-  it("passes --workspace and --trust", () => {
+  it("passes --workspace, --trust, and --force", () => {
     spawnCursorAgent("hello", { workspace: "/home/user/proj" });
 
     expect(mockSpawn).toHaveBeenCalledWith(
       expect.any(String),
-      expect.arrayContaining(["--workspace", "/home/user/proj", "--trust"]),
+      expect.arrayContaining(["--workspace", "/home/user/proj", "--trust", "--force"]),
       expect.objectContaining({ cwd: "/home/user/proj" })
     );
   });

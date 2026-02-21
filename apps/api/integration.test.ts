@@ -112,7 +112,15 @@ async function waitForPersist(ms = 200) {
 
 async function consumeStream(
   res: Response,
-  onChunk: (obj: { type: string; content?: string; error?: string; sessionId?: string | null; kind?: string; label?: string }) => void
+  onChunk: (obj: {
+    type: string;
+    content?: string;
+    error?: string;
+    sessionId?: string | null;
+    kind?: string;
+    label?: string;
+    block?: { type: string; content?: string; kind?: string; label?: string };
+  }) => void
 ): Promise<void> {
   const reader = res.body?.getReader();
   if (!reader) throw new Error("No body");
@@ -162,6 +170,7 @@ describe("Message streaming (mock CLI)", () => {
     let hadError = false;
 
     await consumeStream(res, (obj) => {
+      if (obj.type === "block" && obj.block?.type === "text") chunks.push(obj.block.content ?? "");
       if (obj.type === "chunk") chunks.push(obj.content ?? "");
       if (obj.type === "done") doneSessionId = obj.sessionId ?? null;
       if (obj.type === "error") hadError = true;
@@ -189,14 +198,16 @@ describe("Message streaming (mock CLI)", () => {
 
     const chunks: string[] = [];
     await consumeStream(res, (obj) => {
+      if (obj.type === "block" && obj.block?.type === "text") chunks.push(obj.block.content ?? "");
       if (obj.type === "chunk") chunks.push(obj.content ?? "");
     });
 
     const streamedText = chunks.join("");
     const marker = "[ASSISTANT_REPLY]";
-    const count = (streamedText.match(new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")) ?? []).length;
+    const escaped = marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const count = (streamedText.match(new RegExp(escaped, "g")) ?? []).length;
     expect(count).toBe(1);
-    expect(streamedText).not.toMatch(new RegExp(`${marker}.*${marker}`));
+    expect(streamedText).not.toMatch(new RegExp(`${escaped}.*${escaped}`));
   });
 
   it.skipIf(!useMockCli)("emits activity events for tool_call and thinking (for UI)", async () => {
@@ -210,6 +221,7 @@ describe("Message streaming (mock CLI)", () => {
 
     const activities: { kind: string; label: string }[] = [];
     await consumeStream(res, (obj) => {
+      if (obj.type === "block" && obj.block?.type === "activity") activities.push({ kind: obj.block.kind ?? "", label: obj.block.label ?? "" });
       if (obj.type === "activity") activities.push({ kind: obj.kind ?? "", label: obj.label ?? "" });
     });
 
@@ -228,6 +240,24 @@ describe("Message streaming (mock CLI)", () => {
     const marker = "[ASSISTANT_REPLY]";
     const count = (assistantMsg.content.match(new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")) ?? []).length;
     expect(count).toBe(1);
+  });
+
+  it.skipIf(!useMockCli)("persists blocks (ordered text + activities) with assistant message", async () => {
+    const { chatId } = await setupProjectAndChat();
+    await sendMessageAndDrain(chatId, "Test blocks");
+    await waitForPersist();
+    const msgs = await fetch(`/api/chats/${chatId}/messages`).then((r) => r.json());
+    const assistantMsg = msgs.find((m: { role: string }) => m.role === "assistant");
+    expect(assistantMsg).toBeDefined();
+    expect(assistantMsg.blocks).toBeDefined();
+    const blocks = typeof assistantMsg.blocks === "string" ? JSON.parse(assistantMsg.blocks) : assistantMsg.blocks;
+    expect(Array.isArray(blocks)).toBe(true);
+    const activities = blocks.filter((b: { type: string }) => b.type === "activity");
+    const texts = blocks.filter((b: { type: string }) => b.type === "text");
+    expect(activities.some((a: { kind: string }) => a.kind === "tool_call")).toBe(true);
+    expect(activities.some((a: { kind: string }) => a.kind === "thinking")).toBe(true);
+    expect(texts.length).toBeGreaterThan(0);
+    expect(texts[0].content).toContain("[ASSISTANT_REPLY]");
   });
 
   it.skipIf(!useMockCli)("persists only assistant content to DB, not user/tool mix", async () => {
@@ -375,6 +405,7 @@ describe("E2E with real Cursor CLI", () => {
       let doneSessionId: string | null = null;
       let hadError = false;
       await consumeStream(res, (obj) => {
+        if (obj.type === "block" && obj.block?.type === "text") chunks.push(obj.block.content ?? "");
         if (obj.type === "chunk") chunks.push(obj.content ?? "");
         if (obj.type === "done") doneSessionId = obj.sessionId ?? null;
         if (obj.type === "error") hadError = true;
@@ -547,7 +578,8 @@ describe("E2E with real Cursor CLI", () => {
       });
       const chunkCounts: number[] = [];
       await consumeStream(res, (obj) => {
-        if (obj.type === "chunk") chunkCounts.push((obj.content ?? "").length);
+        const c = (obj.type === "block" && obj.block?.type === "text" ? obj.block.content : obj.content) ?? "";
+        if (c) chunkCounts.push(c.length);
       });
       expect(chunkCounts.length).toBeGreaterThan(0);
     });
@@ -563,6 +595,7 @@ describe("E2E with real Cursor CLI", () => {
       });
       const chunks: string[] = [];
       await consumeStream(res, (obj) => {
+        if (obj.type === "block" && obj.block?.type === "text") chunks.push(obj.block.content ?? "");
         if (obj.type === "chunk") chunks.push(obj.content ?? "");
       });
       const text = chunks.join("");
@@ -592,9 +625,11 @@ describe("E2E with real Cursor CLI", () => {
       const chunksB: string[] = [];
       await Promise.all([
         consumeStream(resA, (obj) => {
+          if (obj.type === "block" && obj.block?.type === "text") chunksA.push(obj.block.content ?? "");
           if (obj.type === "chunk") chunksA.push(obj.content ?? "");
         }),
         consumeStream(resB, (obj) => {
+          if (obj.type === "block" && obj.block?.type === "text") chunksB.push(obj.block.content ?? "");
           if (obj.type === "chunk") chunksB.push(obj.content ?? "");
         }),
       ]);
