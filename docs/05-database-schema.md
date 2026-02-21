@@ -85,7 +85,7 @@ Project ──┬──< Chat >──< Message
 
 ## ORM Model Examples (Pseudocode)
 
-### Drizzle (Bun + better-sqlite3)
+### Drizzle (Node + better-sqlite3)
 
 ```ts
 import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";

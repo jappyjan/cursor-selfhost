@@ -1,9 +1,9 @@
 /**
- * DB package tests — run with: bun test client.test.ts
+ * DB package tests — run with: pnpm test
  */
 process.env.DATABASE_PATH = ":memory:";
 
-import { describe, expect, it, beforeAll } from "bun:test";
+import { describe, expect, it, beforeAll } from "vitest";
 import { db, runMigrations, ensureAppConfigDefaults } from "./src/client";
 import * as schema from "./src/schema";
 

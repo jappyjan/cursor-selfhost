@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "dev": "pnpm run dev:api & pnpm run dev:web",
-    "dev:api": "pnpm --filter api dev:node",
+    "dev:api": "pnpm --filter api dev",
     "dev:web": "pnpm --filter web dev",
     "build": "pnpm -r run build",
     "db:migrate": "pnpm --filter db migrate",

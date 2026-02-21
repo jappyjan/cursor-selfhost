@@ -1,10 +1,8 @@
 /**
- * API tests — run with: bun test app.test.ts
+ * API tests — run with: pnpm test
  * Uses in-memory SQLite (DATABASE_PATH=:memory:) for isolation.
  */
-process.env.DATABASE_PATH = ":memory:";
-
-import { describe, expect, it, beforeAll } from "bun:test";
+import { describe, expect, it, beforeAll } from "vitest";
 import { app } from "./app";
 import { runMigrations, ensureAppConfigDefaults } from "@cursor-selfhost/db";
 
@@ -156,6 +154,44 @@ describe("API", () => {
       expect(res.status).toBe(200);
       const json = await res.json();
       expect(Array.isArray(json)).toBe(true);
+    });
+
+    it("POST /api/chats/:id/messages returns 400 when content missing", async () => {
+      const projectsRes = await fetch("/api/projects");
+      const projects = await projectsRes.json();
+      const projectId = projects[0]?.id;
+      const chatsRes = await fetch(`/api/projects/${projectId}/chats`);
+      const chats = await chatsRes.json();
+      const chatId = chats[0]?.id;
+      const res = await fetch(`/api/chats/${chatId}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.error).toContain("content");
+    });
+
+    it("POST /api/chats/:id/messages returns 404 for unknown chat", async () => {
+      const res = await fetch("/api/chats/unknown-chat-id/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: "Hello" }),
+      });
+      expect(res.status).toBe(404);
+      const json = await res.json();
+      expect(json.error).toContain("not found");
+    });
+  });
+
+  describe("Cursor status", () => {
+    it("GET /api/cursor/status returns ok and optionally error", async () => {
+      const res = await fetch("/api/cursor/status");
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(typeof json.ok).toBe("boolean");
+      if (!json.ok) expect(typeof json.error).toBe("string");
     });
   });
 });

@@ -4,6 +4,11 @@ import { eq, desc } from "drizzle-orm";
 import { db } from "@cursor-selfhost/db";
 import * as schema from "@cursor-selfhost/db/schema";
 import { nanoid } from "nanoid";
+import {
+  spawnCursorAgent,
+  parseCursorLine,
+  extractTextFromLine,
+} from "./src/cursor-cli";
 
 export const app = new Hono();
 
@@ -182,4 +187,111 @@ app.get("/api/chats/:id/messages", async (c) => {
   const id = c.req.param("id");
   const list = await db.select().from(schema.messages).where(eq(schema.messages.chatId, id)).orderBy(schema.messages.createdAt);
   return c.json(list);
+});
+
+// Cursor auth check
+app.get("/api/cursor/status", async (c) => {
+  const { checkCursorAuth } = await import("./src/cursor-cli");
+  const result = await checkCursorAuth();
+  return c.json(result);
+});
+
+// POST /api/chats/:id/messages — send message, stream response
+app.post("/api/chats/:id/messages", async (c) => {
+  const chatId = c.req.param("id");
+  const body = await c.req.json<{ content: string }>();
+  const content = body?.content?.trim();
+  if (!content) return c.json({ error: "content required" }, 400);
+
+  const chatRows = await db.select().from(schema.chats).where(eq(schema.chats.id, chatId));
+  if (chatRows.length === 0) return c.json({ error: "Chat not found" }, 404);
+  const chat = chatRows[0];
+
+  const projectRows = await db.select().from(schema.projects).where(eq(schema.projects.id, chat.projectId));
+  if (projectRows.length === 0) return c.json({ error: "Project not found" }, 404);
+  const project = projectRows[0];
+
+  // Persist user message
+  const userMsgId = nanoid();
+  const now = new Date();
+  await db.insert(schema.messages).values({
+    id: userMsgId,
+    chatId,
+    role: "user",
+    content,
+    createdAt: now,
+  });
+
+  const proc = spawnCursorAgent(content, {
+    workspace: project.path,
+    resumeSessionId: chat.sessionId,
+  });
+
+  let sessionId: string | null = null;
+  const assistantChunks: string[] = [];
+
+  const stream = new ReadableStream({
+    start(controller) {
+      const onData = (chunk: Buffer) => {
+        const text = chunk.toString("utf-8");
+        const lines = text.split("\n").filter((l) => l.trim());
+        for (const line of lines) {
+          const parsed = parseCursorLine(line);
+          if (!parsed) continue;
+          if (parsed.session_id) sessionId = parsed.session_id;
+          const extracted = extractTextFromLine(parsed);
+          if (extracted) {
+            assistantChunks.push(extracted);
+            controller.enqueue(new TextEncoder().encode(JSON.stringify({ type: "chunk", content: extracted }) + "\n"));
+          }
+          if (parsed.type === "result" && parsed.result) {
+            controller.enqueue(new TextEncoder().encode(JSON.stringify({ type: "done", sessionId: parsed.session_id ?? null }) + "\n"));
+          }
+          if (parsed.error) {
+            controller.enqueue(new TextEncoder().encode(JSON.stringify({ type: "error", error: parsed.error }) + "\n"));
+          }
+        }
+      };
+      proc.stdout?.on("data", onData);
+      proc.on("close", (code) => {
+        const fullContent = assistantChunks.join("");
+        // Persist assistant message and session_id (async, fire-and-forget)
+        (async () => {
+          try {
+            if (fullContent) {
+              await db.insert(schema.messages).values({
+                id: nanoid(),
+                chatId,
+                role: "assistant",
+                content: fullContent,
+                createdAt: new Date(),
+              });
+            }
+            if (sessionId) {
+              await db.update(schema.chats).set({ sessionId, updatedAt: new Date() }).where(eq(schema.chats.id, chatId));
+            }
+          } catch (e) {
+            console.error("Failed to persist assistant message:", e);
+          }
+        })();
+        if (code !== 0 && !sessionId && assistantChunks.length === 0) {
+          controller.enqueue(new TextEncoder().encode(JSON.stringify({ type: "error", error: `Cursor CLI exited with code ${code}` }) + "\n"));
+        }
+        controller.close();
+      });
+      proc.on("error", (err) => {
+        controller.enqueue(new TextEncoder().encode(JSON.stringify({ type: "error", error: err.message }) + "\n"));
+        controller.close();
+      });
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "application/x-ndjson",
+      "Transfer-Encoding": "chunked",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    },
+  });
 });

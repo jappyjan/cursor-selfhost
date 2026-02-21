@@ -4,19 +4,18 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "bun run --hot main.ts",
-    "dev:node": "pnpm exec tsx watch main.ts",
-    "start": "bun run main.ts",
-    "start:node": "pnpm exec tsx main.ts",
-    "test": "bun test"
+    "dev": "pnpm exec tsx watch main.ts",
+    "start": "pnpm exec tsx main.ts",
+    "test": "vitest run"
   },
   "dependencies": {
-    "hono": "^4.6.0",
     "@cursor-selfhost/db": "workspace:*",
     "@hono/node-server": "^1.13.0",
+    "hono": "^4.6.0",
     "nanoid": "^5.0.9"
   },
   "devDependencies": {
-    "tsx": "^4.19.2"
+    "tsx": "^4.19.2",
+    "vitest": "^4.0.18"
   }
 }

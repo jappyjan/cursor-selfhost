@@ -21,7 +21,7 @@ pnpm test:api       # API only
 pnpm --filter db test   # DB package only
 ```
 
-**Requirements**: Bun (API and DB tests use `bun test`).
+**Requirements**: Node.js (API and DB tests use Vitest).
 
 ---
 
@@ -29,7 +29,7 @@ pnpm --filter db test   # DB package only
 
 | Package | Test file(s) | What's tested |
 |---------|--------------|----------------|
-| `apps/api` | `app.test.ts` | Health, config GET/PUT, browse, projects CRUD, chats CRUD, messages |
+| `apps/api` | `app.test.ts` | Health, config GET/PUT, browse, projects CRUD, chats CRUD, messages, POST messages validation, cursor status |
 | `packages/db` | `client.test.ts` | Migrations, ensureAppConfigDefaults |
 
 ---
@@ -44,6 +44,8 @@ pnpm --filter db test   # DB package only
 | API: projects CRUD | ✅ |
 | API: chats CRUD | ✅ |
 | API: messages list | ✅ |
+| API: POST messages (validation) | ✅ |
+| API: cursor status | ✅ |
 | DB: migrations | ✅ |
 | DB: ensureAppConfigDefaults | ✅ |
 | Frontend | ⬜ (Phase 5+) |

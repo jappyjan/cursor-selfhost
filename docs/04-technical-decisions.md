@@ -5,7 +5,7 @@
 ```
 ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
 │   Web UI        │────▶│   Backend API   │────▶│   Cursor CLI    │
-│   (React)       │     │   (Bun/Hono)    │     │   (Subprocess)  │
+│   (React)       │     │   (Node/Hono)   │     │   (Subprocess)  │
 └─────────────────┘     └────────┬────────┘     └─────────────────┘
         │                        │
         │                        ▼
@@ -23,7 +23,7 @@
 cursor-selfhost/
 ├── apps/
 │   ├── web/          # Frontend (React + Vite + shadcn/ui)
-│   └── api/          # Backend (Bun + TypeScript)
+│   └── api/          # Backend (Node + TypeScript)
 ├── packages/
 │   ├── db/           # Drizzle schema, migrations
 │   └── shared/       # Shared types, constants
@@ -39,7 +39,7 @@ cursor-selfhost/
 
 | Concern | Choice | Rationale |
 |---------|--------|-----------|
-| Runtime | **Bun** | TypeScript-native, fast, npm-compatible |
+| Runtime | **Node.js** | Universal compatibility, better-sqlite3 support |
 | Framework | **Hono** | Lightweight, streaming support |
 | ORM | **Drizzle** | Migration support, SQLite via better-sqlite3 |
 | Database | **SQLite** (better-sqlite3) | Simple, file-based, no separate server |
@@ -60,7 +60,7 @@ cursor-selfhost/
 - **Interface**: **stdio** — `cursor agent --print` accepts message on stdin, outputs NDJSON on stdout
 - **Streaming**: Use `--output-format stream-json --stream-partial-output` for real-time chunks
 - **Session resume**: `--resume <sessionId>` — Cursor CLI supports this natively
-- **Process management**: `Bun.spawn` or `child_process` to spawn; capture stdout for streaming
+- **Process management**: `child_process.spawn` to spawn; capture stdout for streaming
 - **Reference**: [cursor-agent-a2a](https://github.com/jeffkit/cursor-agent-a2a) implements this pattern
 
 ## Streaming Strategy
@@ -118,10 +118,10 @@ cursor-selfhost/
 ## ORM Priority
 
 - **ORM with migrations** is more important than runtime choice
-- **Bun** chosen: native TS, fast, better-sqlite3 works for local SQLite
+- **Node.js** chosen: better-sqlite3 works natively; tsx for TypeScript execution
 
 ## Open Questions
 
-- [x] Deno + Drizzle + libsql: libsql file: not supported in Deno; switched to Bun + better-sqlite3
-- [x] Monorepo: Unified pnpm-workspace; API uses Bun
+- [x] Deno + Drizzle + libsql: libsql file: not supported in Deno; switched to Node + better-sqlite3
+- [x] Monorepo: Unified pnpm-workspace; API uses Node
 - [ ] Chat title generation: Use Cursor CLI with "summarize" prompt, or separate lightweight model?

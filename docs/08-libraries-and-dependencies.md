@@ -16,21 +16,21 @@ The Cursor CLI uses **stdio** (stdin/stdout):
 - **Session resume**: `--resume <sessionId>` — Cursor CLI supports this natively
 - **Install**: `curl https://cursor.com/install -fsS | bash`; auth via `cursor agent login` or `CURSOR_API_KEY`
 
-## Backend (Bun + TypeScript)
+## Backend (Node + TypeScript)
 
 | Package | Purpose | Version | License | Status |
 |---------|---------|---------|---------|--------|
-| [Bun](https://bun.sh/) | Runtime | Latest | MIT | ✅ Actively maintained, native TS |
+| [Node.js](https://nodejs.org/) | Runtime | LTS | MIT | ✅ Universal, better-sqlite3 support |
 | [Hono](https://hono.dev/) | HTTP framework | Latest | MIT | ✅ Actively maintained, lightweight, streaming support |
 | [drizzle-orm](https://orm.drizzle.team/) | ORM | Latest | Apache 2.0 | ✅ 32k+ stars, actively maintained |
-| [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) | SQLite driver (Node/Bun) | Latest | MIT | ✅ Drizzle-native; local file support |
+| [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) | SQLite driver (Node) | Latest | MIT | ✅ Drizzle-native; local file support |
 | [drizzle-kit](https://github.com/drizzle-team/drizzle-kit) | Migrations | Latest | Apache 2.0 | ✅ Part of Drizzle ecosystem |
 | [nanoid](https://github.com/ai/nanoid) | UUIDs / IDs | v5 | MIT | ✅ Tiny, no deps |
 
 **Alternatives considered**:
 - **DenoDB**: Not actively maintained ⛔
 - **Oak**: Heavier than Hono; Hono has better DX and streaming
-- **libsql**: Web build doesn't support `file:` URLs in Deno; we use better-sqlite3 with Bun.
+- **libsql**: Web build doesn't support `file:` URLs in Deno; we use better-sqlite3 with Node.
 
 ## Frontend (React)
 
@@ -77,7 +77,7 @@ The Cursor CLI uses **stdio** (stdin/stdout):
 
 | Approach | Notes |
 |----------|-------|
-| `Bun.spawn` / `child_process` | Spawn `git clone`; no extra deps |
+| `child_process` | Spawn `git clone`; no extra deps |
 | URL validation | Use `new URL()` or simple regex for `git@` and `https://` |
 
 ## Monorepo Tooling
@@ -87,12 +87,12 @@ The Cursor CLI uses **stdio** (stdin/stdout):
 | [pnpm](https://pnpm.io/) | Package manager, workspaces | MIT |
 | [Turbo](https://turbo.build/) (optional) | Build orchestration | MIT |
 
-*Note*: Frontend uses npm/pnpm (Vite/React); Backend uses Bun. Unified pnpm-workspace.
+*Note*: Frontend uses npm/pnpm (Vite/React); Backend uses Node. Unified pnpm-workspace.
 
 ## Version Pinning
 
 - Pin major versions in config files
-- Run `npm outdated` / `bun outdated` periodically
+- Run `npm outdated` periodically
 - Prefer `^` for minor/patch updates
 
 ## License Summary

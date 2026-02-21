@@ -8,14 +8,14 @@ Ordered tasks for the first MVP. Work through in sequence; some items can be par
 
 - [x] **1.1** Create monorepo structure
   - [x] `apps/web/` (React + Vite)
-  - [x] `apps/api/` (Bun)
+  - [x] `apps/api/` (Node)
   - [x] `packages/db/` (Drizzle schema)
   - [x] `packages/shared/` (types, constants)
   - [x] Root `pnpm-workspace.yaml` or equivalent
-- [x] **1.2** Backend: Bun, Hono app skeleton, env config
+- [x] **1.2** Backend: Node, Hono app skeleton, env config
 - [x] **1.3** Frontend: Vite + React, Tailwind, shadcn/ui init
 - [x] **1.4** Verify Deno + Drizzle + libsql; if not, switch to Node + better-sqlite3
-  - Switched to Bun + Drizzle + better-sqlite3 (libsql file: not supported in Deno).
+  - Switched to Node + Drizzle + better-sqlite3 (libsql file: not supported in Deno).
 
 ---
 
@@ -41,23 +41,23 @@ Ordered tasks for the first MVP. Work through in sequence; some items can be par
 
 ## Phase 4: Backend API — Cursor CLI
 
-- [ ] **4.1** Cursor CLI service: spawn `cursor agent --print`, stdin/stdout, `--output-format stream-json`
-- [ ] **4.2** Auth check: detect if Cursor is logged in (e.g. try `cursor agent status` or handle error)
-- [ ] **4.3** Streaming endpoint: `POST /api/chats/:id/messages` — send message, stream response
+- [x] **4.1** Cursor CLI service: spawn `cursor agent --print`, stdin/stdout, `--output-format stream-json`
+- [x] **4.2** Auth check: detect if Cursor is logged in (e.g. try `cursor agent status` or handle error)
+- [x] **4.3** Streaming endpoint: `POST /api/chats/:id/messages` — send message, stream response
   - Spawn CLI with `--workspace <project.path>`, `--resume <sessionId>` if chat has one
   - Pipe stdout to response stream (chunked or SSE)
   - Persist session_id from CLI output to chat
-- [ ] **4.4** Persist user message and assistant response to DB after stream completes
+- [x] **4.4** Persist user message and assistant response to DB after stream completes
 
 ---
 
 ## Phase 5: Frontend — Shell & Routing
 
-- [ ] **5.1** React Router: `/`, `/setup`, `/p/:slug`, `/p/:slug/c/:chatId`, `/p/:slug/new`
-- [ ] **5.2** App shell: Header, Sidebar (collapsible, resizable), MainContent
-- [ ] **5.3** Sidebar: [+ Create], SearchInput, ProjectTree (expand/collapse, [+] per project)
-- [ ] **5.4** Theme: Tailwind dark/light via `prefers-color-scheme`
-- [ ] **5.5** Fonts: Fira Code for code/paths; configure in Tailwind
+- [x] **5.1** React Router: `/`, `/setup`, `/p/:slug`, `/p/:slug/c/:chatId`, `/p/:slug/new`
+- [x] **5.2** App shell: Header, Sidebar (collapsible, resizable), MainContent
+- [x] **5.3** Sidebar: [+ Create], SearchInput, ProjectTree (expand/collapse, [+] per project)
+- [x] **5.4** Theme: Tailwind dark/light via `prefers-color-scheme`
+- [x] **5.5** Fonts: Fira Code for code/paths; configure in Tailwind
 
 ---
 
@@ -131,6 +131,6 @@ Phase 1 → Phase 2 → Phase 3 → Phase 4
 ## Testing
 
 - **Policy**: All new code must have tests. See [docs/12-testing.md](12-testing.md).
-- **API**: `bun test` in apps/api (integration tests via app.fetch)
-- **DB**: `bun test` in packages/db
+- **API**: `pnpm test` in apps/api (Vitest, integration tests via app.fetch)
+- **DB**: `pnpm test` in packages/db (Vitest)
 - **E2E**: Phase 10.5
