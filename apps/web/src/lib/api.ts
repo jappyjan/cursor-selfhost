@@ -171,13 +171,18 @@ export async function deleteChat(chatId: string): Promise<void> {
   if (!res.ok) throw new Error("Failed to delete chat");
 }
 
-export type StreamChunk = { type: "chunk"; content: string } | { type: "done"; sessionId: string | null } | { type: "error"; error: string };
+export type StreamChunk =
+  | { type: "chunk"; content: string }
+  | { type: "activity"; kind: string; label: string }
+  | { type: "done"; sessionId: string | null }
+  | { type: "error"; error: string };
 
 export async function sendMessageStreaming(
   chatId: string,
   content: string,
   onChunk: (chunk: StreamChunk) => void
 ): Promise<void> {
+  type ParsedChunk = { type: string; content?: string; kind?: string; label?: string; sessionId?: string | null; error?: string };
   const res = await fetch(`${API_BASE}/chats/${chatId}/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -200,8 +205,11 @@ export async function sendMessageStreaming(
     for (const line of lines) {
       if (!line.trim()) continue;
       try {
-        const parsed = JSON.parse(line) as StreamChunk;
-        onChunk(parsed);
+        const parsed = JSON.parse(line) as ParsedChunk;
+        if (parsed.type === "chunk") onChunk({ type: "chunk", content: parsed.content ?? "" });
+        else if (parsed.type === "activity") onChunk({ type: "activity", kind: parsed.kind ?? "", label: parsed.label ?? "" });
+        else if (parsed.type === "done") onChunk({ type: "done", sessionId: parsed.sessionId ?? null });
+        else if (parsed.type === "error") onChunk({ type: "error", error: parsed.error ?? "" });
       } catch (e) {
         console.warn("[sendMessageStreaming] Malformed NDJSON line:", line?.slice(0, 100), e);
       }
@@ -209,8 +217,11 @@ export async function sendMessageStreaming(
   }
   if (buffer.trim()) {
     try {
-      const parsed = JSON.parse(buffer) as StreamChunk;
-      onChunk(parsed);
+      const parsed = JSON.parse(buffer) as ParsedChunk;
+      if (parsed.type === "chunk") onChunk({ type: "chunk", content: parsed.content ?? "" });
+      else if (parsed.type === "activity") onChunk({ type: "activity", kind: parsed.kind ?? "", label: parsed.label ?? "" });
+      else if (parsed.type === "done") onChunk({ type: "done", sessionId: parsed.sessionId ?? null });
+      else if (parsed.type === "error") onChunk({ type: "error", error: parsed.error ?? "" });
     } catch (e) {
       console.warn("[sendMessageStreaming] Malformed NDJSON buffer:", buffer?.slice(0, 100), e);
     }

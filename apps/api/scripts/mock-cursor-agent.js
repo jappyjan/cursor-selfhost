@@ -47,7 +47,16 @@ function main() {
       })
     );
 
-    // 3. Tool call (should NOT be streamed — would mix tool output into answer)
+    // 3. Thinking (activity — emitted for UI, not streamed as content)
+    process.stdout.write(
+      ndjson({
+        type: "thinking",
+        message: { content: [{ type: "text", text: "Considering the request..." }] },
+        session_id: sessionId,
+      })
+    );
+
+    // 4. Tool call (activity — emitted for UI, not streamed as content)
     process.stdout.write(
       ndjson({
         type: "tool_call",
@@ -58,7 +67,7 @@ function main() {
       })
     );
 
-    // 4. Assistant text chunks (SHOULD be streamed — must NOT duplicate user echo)
+    // 5. Assistant text chunks (SHOULD be streamed — must NOT stream result to avoid duplication)
     const assistantReply = `[ASSISTANT_REPLY] Response to your message.`;
     process.stdout.write(
       ndjson({
@@ -68,7 +77,7 @@ function main() {
       })
     );
 
-    // 5. Final result (SHOULD be streamed, typically duplicates assistant content)
+    // 6. Final result (do NOT stream — duplicates assistant content; use only for done/session_id)
     process.stdout.write(
       ndjson({ type: "result", result: assistantReply, session_id: sessionId })
     );

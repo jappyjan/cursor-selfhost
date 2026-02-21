@@ -51,9 +51,11 @@ pnpm --filter db test   # DB package only
 | API: messages list | ✅ |
 | API: POST messages (validation) | ✅ |
 | API: cursor status | ✅ |
-| Cursor CLI: parseCursorLine, extractTextFromLine, isAssistantContent | ✅ |
+| Cursor CLI: parseCursorLine, extractTextFromLine, isAssistantContent, isActivityContent, extractActivityLabel | ✅ |
 | Cursor CLI: createCursorSession, spawnCursorAgent | ✅ (mocked spawn) |
 | Integration: message streaming (user/tool/assistant filtering) | ✅ |
+| Integration: no message duplication (assistant vs result) | ✅ |
+| Integration: activity events (tool_call, thinking) | ✅ |
 | Integration: chat isolation (sessions, no cross-chat mixing) | ✅ |
 | DB: migrations | ✅ |
 | DB: ensureAppConfigDefaults | ✅ |

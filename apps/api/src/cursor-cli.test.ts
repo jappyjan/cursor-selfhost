@@ -14,6 +14,8 @@ import {
   parseCursorLine,
   extractTextFromLine,
   isAssistantContent,
+  isActivityContent,
+  extractActivityLabel,
   createCursorSession,
   spawnCursorAgent,
 } from "./cursor-cli";
@@ -45,8 +47,8 @@ describe("isAssistantContent", () => {
   it("returns true for assistant type", () => {
     expect(isAssistantContent({ type: "assistant", message: { content: [{ text: "Hi" }] } })).toBe(true);
   });
-  it("returns true for result type", () => {
-    expect(isAssistantContent({ type: "result", result: "Done" })).toBe(true);
+  it("returns false for result type (avoids duplication — result repeats assistant content)", () => {
+    expect(isAssistantContent({ type: "result", result: "Done" })).toBe(false);
   });
   it("returns false for user type (must not stream user echo)", () => {
     expect(isAssistantContent({ type: "user", message: { content: [{ text: "Hello" }] } })).toBe(false);
@@ -56,6 +58,38 @@ describe("isAssistantContent", () => {
   });
   it("returns false for system type", () => {
     expect(isAssistantContent({ type: "system", session_id: "x" })).toBe(false);
+  });
+});
+
+describe("isActivityContent", () => {
+  it("returns true for tool_call, tool_result, thinking", () => {
+    expect(isActivityContent({ type: "tool_call" })).toBe(true);
+    expect(isActivityContent({ type: "tool_result" })).toBe(true);
+    expect(isActivityContent({ type: "thinking" })).toBe(true);
+  });
+  it("returns false for assistant, user, result, system", () => {
+    expect(isActivityContent({ type: "assistant" })).toBe(false);
+    expect(isActivityContent({ type: "user" })).toBe(false);
+    expect(isActivityContent({ type: "result" })).toBe(false);
+    expect(isActivityContent({ type: "system" })).toBe(false);
+  });
+});
+
+describe("extractActivityLabel", () => {
+  it("extracts Tool name from [Tool: name ...]", () => {
+    expect(
+      extractActivityLabel({ type: "tool_call", message: { content: [{ text: "[Tool: read_file path=/tmp/foo]" }] } })
+    ).toBe("Tool: read_file");
+  });
+  it("returns Thinking… for thinking type", () => {
+    expect(extractActivityLabel({ type: "thinking", message: { content: [{ text: "Let me consider..." }] } })).toBe(
+      "Thinking…"
+    );
+  });
+  it("truncates long text", () => {
+    const long = "x".repeat(80);
+    expect(extractActivityLabel({ type: "tool_result", message: { content: [{ text: long }] } })).toHaveLength(63);
+    expect(extractActivityLabel({ type: "tool_result", message: { content: [{ text: long }] } })).toMatch(/…$/);
   });
 });
 

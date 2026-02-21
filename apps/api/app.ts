@@ -10,6 +10,8 @@ import {
   parseCursorLine,
   extractTextFromLine,
   isAssistantContent,
+  isActivityContent,
+  extractActivityLabel,
 } from "./src/cursor-cli";
 import {
   createProjectSchema,
@@ -388,6 +390,7 @@ app.post("/api/chats/:id/messages", async (c) => {
 
   let sessionId: string | null = null;
   const assistantChunks: string[] = [];
+  let resultContent: string | null = null; // fallback when Cursor sends only result (no assistant chunks)
   let stderrBuffer = "";
 
   const stream = new ReadableStream({
@@ -416,14 +419,26 @@ app.post("/api/chats/:id/messages", async (c) => {
           const parsed = parseCursorLine(line);
           if (!parsed) continue;
           if (parsed.session_id) sessionId = parsed.session_id;
-          if (!isAssistantContent(parsed)) continue;
-          const extracted = extractTextFromLine(parsed);
-          if (extracted) {
-            assistantChunks.push(extracted);
-            safeEnqueue(new TextEncoder().encode(JSON.stringify({ type: "chunk", content: extracted }) + "\n"));
+          // Activity (tool_call, thinking): emit for UI, do not add to assistant content
+          if (isActivityContent(parsed)) {
+            const label = extractActivityLabel(parsed);
+            safeEnqueue(new TextEncoder().encode(JSON.stringify({ type: "activity", kind: parsed.type, label }) + "\n"));
+            continue;
           }
-          if (parsed.type === "result" && parsed.result) {
+          // Assistant chunks only — do NOT stream result (avoids duplication)
+          if (isAssistantContent(parsed)) {
+            const extracted = extractTextFromLine(parsed);
+            if (extracted) {
+              assistantChunks.push(extracted);
+              safeEnqueue(new TextEncoder().encode(JSON.stringify({ type: "chunk", content: extracted }) + "\n"));
+            }
+            continue;
+          }
+          // Result: use for done signal; persist only if no assistant chunks (fallback)
+          if (parsed.type === "result") {
+            if (parsed.result) resultContent = parsed.result;
             safeEnqueue(new TextEncoder().encode(JSON.stringify({ type: "done", sessionId: parsed.session_id ?? null }) + "\n"));
+            continue;
           }
           if (parsed.error) {
             safeEnqueue(new TextEncoder().encode(JSON.stringify({ type: "error", error: parsed.error }) + "\n"));
@@ -432,7 +447,7 @@ app.post("/api/chats/:id/messages", async (c) => {
       };
       proc.stdout?.on("data", onData);
       proc.on("close", (code) => {
-        const fullContent = assistantChunks.join("");
+        const fullContent = assistantChunks.length > 0 ? assistantChunks.join("") : (resultContent ?? "");
         // Persist assistant message and session_id (async, fire-and-forget)
         (async () => {
           try {

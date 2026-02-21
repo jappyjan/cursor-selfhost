@@ -112,7 +112,7 @@ async function waitForPersist(ms = 200) {
 
 async function consumeStream(
   res: Response,
-  onChunk: (obj: { type: string; content?: string; error?: string; sessionId?: string | null }) => void
+  onChunk: (obj: { type: string; content?: string; error?: string; sessionId?: string | null; kind?: string; label?: string }) => void
 ): Promise<void> {
   const reader = res.body?.getReader();
   if (!reader) throw new Error("No body");
@@ -176,6 +176,58 @@ describe("Message streaming (mock CLI)", () => {
     // Must contain assistant response only
     expect(streamedText).toContain("[ASSISTANT_REPLY]");
     expect(doneSessionId).toBeTruthy();
+  });
+
+  it.skipIf(!useMockCli)("does not duplicate content (assistant + result both contain same text)", async () => {
+    const { chatId } = await setupProjectAndChat();
+    const res = await fetch(`/api/chats/${chatId}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "Hello" }),
+    });
+    expect(res.status).toBe(200);
+
+    const chunks: string[] = [];
+    await consumeStream(res, (obj) => {
+      if (obj.type === "chunk") chunks.push(obj.content ?? "");
+    });
+
+    const streamedText = chunks.join("");
+    const marker = "[ASSISTANT_REPLY]";
+    const count = (streamedText.match(new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")) ?? []).length;
+    expect(count).toBe(1);
+    expect(streamedText).not.toMatch(new RegExp(`${marker}.*${marker}`));
+  });
+
+  it.skipIf(!useMockCli)("emits activity events for tool_call and thinking (for UI)", async () => {
+    const { chatId } = await setupProjectAndChat();
+    const res = await fetch(`/api/chats/${chatId}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "Test" }),
+    });
+    expect(res.status).toBe(200);
+
+    const activities: { kind: string; label: string }[] = [];
+    await consumeStream(res, (obj) => {
+      if (obj.type === "activity") activities.push({ kind: obj.kind ?? "", label: obj.label ?? "" });
+    });
+
+    expect(activities.some((a) => a.kind === "thinking")).toBe(true);
+    expect(activities.some((a) => a.kind === "tool_call")).toBe(true);
+    expect(activities.some((a) => a.label.includes("read_file"))).toBe(true);
+  });
+
+  it.skipIf(!useMockCli)("persists content without duplication (no result echo)", async () => {
+    const { chatId } = await setupProjectAndChat();
+    await sendMessageAndDrain(chatId, "No duplication");
+    await waitForPersist();
+    const msgs = await fetch(`/api/chats/${chatId}/messages`).then((r) => r.json());
+    const assistantMsg = msgs.find((m: { role: string }) => m.role === "assistant");
+    expect(assistantMsg).toBeDefined();
+    const marker = "[ASSISTANT_REPLY]";
+    const count = (assistantMsg.content.match(new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")) ?? []).length;
+    expect(count).toBe(1);
   });
 
   it.skipIf(!useMockCli)("persists only assistant content to DB, not user/tool mix", async () => {

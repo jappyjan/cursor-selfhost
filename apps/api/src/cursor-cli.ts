@@ -153,26 +153,51 @@ export function parseCursorLine(line: string): CursorLine | null {
 }
 
 /**
- * Types of Cursor CLI output we should stream to the user as assistant content.
- * Excludes: user (echo), system, tool_call, tool_result, etc. — those would mix
- * prompts and tool output into the chat.
+ * Types of Cursor CLI output we should stream as assistant text.
+ * Only "assistant" — incremental chunks. "result" contains the final full answer
+ * which typically duplicates assistant content; streaming both causes duplication.
  */
-const ASSISTANT_CONTENT_TYPES = new Set(["assistant", "result"]);
+const STREAMABLE_ASSISTANT_TYPES = new Set(["assistant"]);
 
 /**
  * Returns true if this line contains assistant response content we should stream.
- * User echoes, tool calls, system messages etc. must NOT be included.
+ * Excludes: user echo, system, tool_call, tool_result.
+ * Excludes "result" type to avoid duplication (result usually repeats assistant content).
  */
 export function isAssistantContent(line: CursorLine): boolean {
-  if (line.type && ASSISTANT_CONTENT_TYPES.has(line.type)) return true;
-  // Legacy: some outputs may not have type; result field indicates final answer
-  if (line.result) return true;
+  if (line.type && STREAMABLE_ASSISTANT_TYPES.has(line.type)) return true;
   return false;
 }
 
 /**
- * Extract plain text from a Cursor output line for streaming/accumulation.
- * Only call this for lines where isAssistantContent(line) is true.
+ * Activity types we emit for UI (tool_call, thinking, etc.) — non-boxed, small indicators.
+ */
+export const ACTIVITY_TYPES = new Set(["tool_call", "tool_result", "thinking"]);
+
+/**
+ * Returns true if this line is an activity we should emit for the UI.
+ */
+export function isActivityContent(line: CursorLine): boolean {
+  return !!(line.type && ACTIVITY_TYPES.has(line.type));
+}
+
+/**
+ * Extract a short label for activity display (e.g. "Tool: read_file").
+ */
+export function extractActivityLabel(line: CursorLine): string {
+  if (line.type === "thinking") return "Thinking…";
+  const text = extractTextFromLine(line);
+  if (text) {
+    const m = text.match(/\[Tool:\s*(\S+)/);
+    if (m) return `Tool: ${m[1]}`;
+    return text.slice(0, 60) + (text.length > 60 ? "…" : "");
+  }
+  return line.type ?? "Activity";
+}
+
+/**
+ * Extract plain text from a Cursor output line.
+ * Used for assistant streaming and for activity labels.
  */
 export function extractTextFromLine(line: CursorLine): string {
   if (line.result) return line.result;

@@ -53,6 +53,7 @@ export function ChatView() {
   const queryClient = useQueryClient();
   const [input, setInput] = useState("");
   const [streamingContent, setStreamingContent] = useState("");
+  const [streamingActivities, setStreamingActivities] = useState<{ kind: string; label: string }[]>([]);
   const [sendError, setSendError] = useState<string | null>(null);
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameTitle, setRenameTitle] = useState("");
@@ -85,9 +86,13 @@ export function ChatView() {
     mutationFn: async ({ content, targetChatId }: { content: string; targetChatId: string }) => {
       setSendError(null);
       setStreamingContent("");
+      setStreamingActivities([]);
       await sendMessageStreaming(targetChatId, content, (chunk) => {
         if (chunk.type === "chunk") {
           setStreamingContent((prev) => prev + chunk.content);
+        }
+        if (chunk.type === "activity") {
+          setStreamingActivities((prev) => [...prev, { kind: chunk.kind, label: chunk.label }]);
         }
         if (chunk.type === "error") {
           setSendError(chunk.error);
@@ -99,11 +104,13 @@ export function ChatView() {
       queryClient.invalidateQueries({ queryKey: ["chat", targetChatId] });
       queryClient.invalidateQueries({ queryKey: ["chats"] });
       setStreamingContent("");
+      setStreamingActivities([]);
       if (sendingToChatIdRef.current === targetChatId) sendingToChatIdRef.current = null;
     },
     onError: (err, { targetChatId }) => {
       setSendError((err as Error).message);
       setStreamingContent("");
+      setStreamingActivities([]);
       if (sendingToChatIdRef.current === targetChatId) sendingToChatIdRef.current = null;
     },
   });
@@ -174,12 +181,13 @@ export function ChatView() {
       });
     }
   }
-  if (isViewingSendingChat && streamingContent) {
+  const showStreamingActivities = isViewingSendingChat && isStreaming && streamingActivities.length > 0;
+  if (isViewingSendingChat && (streamingContent || showStreamingActivities)) {
     displayMessages.push({
       id: "__streaming__",
       chatId: chatId!,
       role: "assistant",
-      content: streamingContent,
+      content: streamingContent || "",
       createdAt: new Date().toISOString(),
     });
   }
@@ -247,31 +255,52 @@ export function ChatView() {
               </p>
             </div>
           ) : (
-            displayMessages.map((m) => (
-              <div
-                key={m.id}
-                className={cn(
-                  "rounded-lg p-4",
-                  m.role === "user"
-                    ? "border-l-4 border-primary/50 bg-accent/50"
-                    : "bg-muted/30"
-                )}
-              >
-                <div className="flex items-center gap-2">
-                  {m.role === "user" ? (
-                    <User className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  ) : (
-                    <Bot className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <>
+              {displayMessages.map((m) => (
+                <div key={m.id}>
+                  {showStreamingActivities && m.id === "__streaming__" && (
+                    <div className="mb-2 flex flex-wrap gap-2">
+                      {streamingActivities.map((a, i) => (
+                        <span
+                          key={i}
+                          className="inline-flex items-center rounded px-2 py-0.5 text-xs text-muted-foreground/80"
+                          title={a.kind}
+                        >
+                          {a.label}
+                        </span>
+                      ))}
+                    </div>
                   )}
-                  <p className="text-sm font-medium text-muted-foreground">
-                    {m.role === "user" ? "You" : "Assistant"}
-                  </p>
+                  <div
+                    className={cn(
+                      "rounded-lg p-4",
+                      m.role === "user"
+                        ? "border-l-4 border-primary/50 bg-accent/50"
+                        : "bg-muted/30",
+                      m.id === "__streaming__" && !m.content && "animate-pulse"
+                    )}
+                  >
+                    <div className="flex items-center gap-2">
+                      {m.role === "user" ? (
+                        <User className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      ) : (
+                        <Bot className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      )}
+                      <p className="text-sm font-medium text-muted-foreground">
+                        {m.role === "user" ? "You" : "Assistant"}
+                      </p>
+                    </div>
+                    <div className="mt-2">
+                      {m.content ? (
+                        <MessageContent content={m.content} />
+                      ) : m.id === "__streaming__" ? (
+                        <span className="text-muted-foreground">Processing…</span>
+                      ) : null}
+                    </div>
+                  </div>
                 </div>
-                <div className="mt-2">
-                  <MessageContent content={m.content} />
-                </div>
-              </div>
-            ))
+              ))}
+            </>
           )}
           <div ref={messagesEndRef} />
         </div>
