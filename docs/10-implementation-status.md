@@ -18,10 +18,10 @@ Track what's implemented for the MVP. Update as work progresses. Use for plannin
 
 | Task | Status | Notes |
 |------|--------|-------|
-| 1.1 Monorepo structure | ⬜ | |
-| 1.2 Backend skeleton | ⬜ | |
-| 1.3 Frontend skeleton | ⬜ | |
-| 1.4 Deno vs Node decision | ⬜ | Verify Drizzle + libsql in Deno |
+| 1.1 Monorepo structure | ✅ | apps/web, apps/api, packages/db, packages/shared |
+| 1.2 Backend skeleton | ✅ | Node/tsx (Bun: better-sqlite3 unsupported), Hono, env config |
+| 1.3 Frontend skeleton | ✅ | Vite + React, Tailwind, shadcn/ui |
+| 1.4 Deno vs Node decision | ✅ | Switched to Bun + Drizzle + better-sqlite3. |
 
 ---
 
@@ -29,10 +29,10 @@ Track what's implemented for the MVP. Update as work progresses. Use for plannin
 
 | Task | Status | Notes |
 |------|--------|-------|
-| 2.1 Schema defined | ⬜ | |
-| 2.2 Initial migration | ⬜ | |
-| 2.3 Migrations on startup | ⬜ | |
-| 2.4 app_config defaults | ⬜ | |
+| 2.1 Schema defined | ✅ | packages/db/src/schema.ts |
+| 2.2 Initial migration | ✅ | migrations/0000_*.sql |
+| 2.3 Migrations on startup | ✅ | runMigrations() in main.ts |
+| 2.4 app_config defaults | ✅ | ensureAppConfigDefaults() |
 
 ---
 
@@ -40,12 +40,12 @@ Track what's implemented for the MVP. Update as work progresses. Use for plannin
 
 | Task | Status | Notes |
 |------|--------|-------|
-| 3.1 First-run check | ⬜ | |
-| 3.2 Set base dir | ⬜ | |
-| 3.3 Browse endpoint | ⬜ | |
-| 3.4 Projects CRUD | ⬜ | |
-| 3.5 Chats CRUD | ⬜ | |
-| 3.6 Messages list | ⬜ | |
+| 3.1 First-run check | ✅ | GET /api/config |
+| 3.2 Set base dir | ✅ | PUT /api/config |
+| 3.3 Browse endpoint | ✅ | GET /api/browse |
+| 3.4 Projects CRUD | ✅ | POST, GET, by-slug |
+| 3.5 Chats CRUD | ✅ | POST, GET, PATCH |
+| 3.6 Messages list | ✅ | GET /api/chats/:id/messages |
 
 ---
 
@@ -134,7 +134,10 @@ Track what's implemented for the MVP. Update as work progresses. Use for plannin
 
 *Copy to planning docs when referencing what exists.*
 
-- *(None yet — MVP not started)*
+- Phase 1: Monorepo, API (Node/tsx), Vite web, Drizzle + better-sqlite3
+- Phase 2: Schema, migrations, app_config defaults
+- Phase 3: Config, browse, projects, chats, messages API
+- Tests: API integration tests, DB unit tests (see docs/12-testing.md)
 
 ---
 
@@ -144,10 +147,10 @@ Track what's implemented for the MVP. Update as work progresses. Use for plannin
 
 | Area | Path | Purpose |
 |------|------|---------|
-| API entry | `apps/api/` | — |
-| Web entry | `apps/web/` | — |
-| DB schema | `packages/db/` | — |
-| Cursor service | — | — |
+| API entry | `apps/api/main.ts` | Node/tsx + Hono (Bun fallback when sqlite supported) |
+| Web entry | `apps/web/` | Vite + React |
+| DB schema | `packages/db/src/schema.ts` | Drizzle + better-sqlite3 |
+| Cursor service | — | Phase 4 |
 
 ---
 
@@ -155,4 +158,5 @@ Track what's implemented for the MVP. Update as work progresses. Use for plannin
 
 | Date | Change |
 |------|--------|
+| 2025-02 | Phase 1–3 complete; tests; Vite host:true for LAN/Tailscale; API uses Node (better-sqlite3) |
 | — | Initial implementation plan and status doc created |

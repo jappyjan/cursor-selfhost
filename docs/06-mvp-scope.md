@@ -86,7 +86,7 @@
 
 - [x] Cursor CLI: `cursor agent --print` with stdin/stdout, NDJSON output
 - [x] Cursor CLI session resume: `--resume <sessionId>` supported
-- [ ] Deno + libsql + Drizzle: local file connection
+- [x] Bun + better-sqlite3 + Drizzle: local file connection
 
 ## MVP Deliverables
 

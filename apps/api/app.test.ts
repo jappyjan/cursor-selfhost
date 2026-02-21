@@ -1,0 +1,161 @@
+/**
+ * API tests — run with: bun test app.test.ts
+ * Uses in-memory SQLite (DATABASE_PATH=:memory:) for isolation.
+ */
+process.env.DATABASE_PATH = ":memory:";
+
+import { describe, expect, it, beforeAll } from "bun:test";
+import { app } from "./app";
+import { runMigrations, ensureAppConfigDefaults } from "@cursor-selfhost/db";
+
+beforeAll(async () => {
+  runMigrations();
+  await ensureAppConfigDefaults();
+});
+
+function fetch(path: string, init?: RequestInit) {
+  return app.fetch(new Request(`http://localhost${path}`, init));
+}
+
+describe("API", () => {
+  describe("GET /api/health", () => {
+    it("returns ok", async () => {
+      const res = await fetch("/api/health");
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json).toEqual({ ok: true });
+    });
+  });
+
+  describe("GET /api/config", () => {
+    it("returns config with configured false when base path not set", async () => {
+      const res = await fetch("/api/config");
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.configured).toBe(false);
+      expect(json.sendShortcut).toBe("enter");
+    });
+  });
+
+  describe("PUT /api/config", () => {
+    it("persists projectsBasePath", async () => {
+      const res = await fetch("/api/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectsBasePath: "/tmp/projects" }),
+      });
+      expect(res.status).toBe(200);
+      const getRes = await fetch("/api/config");
+      const json = await getRes.json();
+      expect(json.projectsBasePath).toBe("/tmp/projects");
+      expect(json.configured).toBe(true);
+    });
+
+    it("persists sendShortcut", async () => {
+      await fetch("/api/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sendShortcut: "shift_enter" }),
+      });
+      const res = await fetch("/api/config");
+      const json = await res.json();
+      expect(json.sendShortcut).toBe("shift_enter");
+    });
+  });
+
+  describe("GET /api/browse", () => {
+    it("returns 400 when path outside base", async () => {
+      await fetch("/api/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectsBasePath: "/tmp" }),
+      });
+      const res = await fetch("/api/browse?path=/etc");
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.error).toContain("outside");
+    });
+  });
+
+  describe("Projects CRUD", () => {
+    it("GET /api/projects returns empty list", async () => {
+      const res = await fetch("/api/projects");
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(Array.isArray(json)).toBe(true);
+    });
+
+    it("POST /api/projects creates local project", async () => {
+      const res = await fetch("/api/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sourceType: "local",
+          path: "/tmp/test-project",
+          name: "Test Project",
+          slug: "test-project",
+        }),
+      });
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.slug).toBe("test-project");
+      expect(json.name).toBe("Test Project");
+      expect(json.path).toBe("/tmp/test-project");
+      expect(json.sourceType).toBe("local");
+    });
+
+    it("GET /api/projects/by-slug/:slug returns project", async () => {
+      const res = await fetch("/api/projects/by-slug/test-project");
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.slug).toBe("test-project");
+    });
+
+    it("GET /api/projects/:id returns 404 for unknown id", async () => {
+      const res = await fetch("/api/projects/unknown-id");
+      expect(res.status).toBe(404);
+    });
+  });
+
+  describe("Chats CRUD", () => {
+    let projectId: string;
+
+    beforeAll(async () => {
+      const res = await fetch("/api/projects");
+      const projects = await res.json();
+      projectId = projects[0]?.id ?? "";
+    });
+
+    it("POST /api/projects/:id/chats creates chat", async () => {
+      const res = await fetch(`/api/projects/${projectId}/chats`, {
+        method: "POST",
+      });
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.projectId).toBe(projectId);
+      expect(json.id).toBeDefined();
+    });
+
+    it("GET /api/projects/:id/chats returns chats", async () => {
+      const res = await fetch(`/api/projects/${projectId}/chats`);
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(Array.isArray(json)).toBe(true);
+    });
+  });
+
+  describe("Messages", () => {
+    it("GET /api/chats/:id/messages returns 200 for valid chat", async () => {
+      const projectsRes = await fetch("/api/projects");
+      const projects = await projectsRes.json();
+      const projectId = projects[0]?.id;
+      const chatsRes = await fetch(`/api/projects/${projectId}/chats`);
+      const chats = await chatsRes.json();
+      const chatId = chats[0]?.id;
+      const res = await fetch(`/api/chats/${chatId}/messages`);
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(Array.isArray(json)).toBe(true);
+    });
+  });
+});

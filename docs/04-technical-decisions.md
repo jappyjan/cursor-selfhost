@@ -5,7 +5,7 @@
 ```
 ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
 │   Web UI        │────▶│   Backend API   │────▶│   Cursor CLI    │
-│   (React)       │     │   (Deno/Hono)   │     │   (Subprocess)  │
+│   (React)       │     │   (Bun/Hono)    │     │   (Subprocess)  │
 └─────────────────┘     └────────┬────────┘     └─────────────────┘
         │                        │
         │                        ▼
@@ -23,12 +23,12 @@
 cursor-selfhost/
 ├── apps/
 │   ├── web/          # Frontend (React + Vite + shadcn/ui)
-│   └── api/          # Backend (Deno + TypeScript)
+│   └── api/          # Backend (Bun + TypeScript)
 ├── packages/
-│   ├── db/           # Drizzle schema, migrations (shared or Deno)
+│   ├── db/           # Drizzle schema, migrations
 │   └── shared/       # Shared types, constants
 ├── docs/
-└── deno.json + package.json (or pnpm-workspace)
+└── package.json (pnpm-workspace)
 ```
 
 **Rationale**: Single repo simplifies development; packages can be extracted later if needed.
@@ -39,10 +39,10 @@ cursor-selfhost/
 
 | Concern | Choice | Rationale |
 |---------|--------|-----------|
-| Runtime | **Deno** | TypeScript-native, secure, modern tooling |
-| Framework | **Hono** | Lightweight, streaming support, Deno-compatible |
-| ORM | **Drizzle** | Migration support, SQLite via libsql, works with Deno |
-| Database | **SQLite** (libsql `file:`) | Simple, file-based, no separate server |
+| Runtime | **Bun** | TypeScript-native, fast, npm-compatible |
+| Framework | **Hono** | Lightweight, streaming support |
+| ORM | **Drizzle** | Migration support, SQLite via better-sqlite3 |
+| Database | **SQLite** (better-sqlite3) | Simple, file-based, no separate server |
 
 ### Frontend
 
@@ -60,7 +60,7 @@ cursor-selfhost/
 - **Interface**: **stdio** — `cursor agent --print` accepts message on stdin, outputs NDJSON on stdout
 - **Streaming**: Use `--output-format stream-json --stream-partial-output` for real-time chunks
 - **Session resume**: `--resume <sessionId>` — Cursor CLI supports this natively
-- **Process management**: `Deno.Command` to spawn; capture stdout for streaming
+- **Process management**: `Bun.spawn` or `child_process` to spawn; capture stdout for streaming
 - **Reference**: [cursor-agent-a2a](https://github.com/jeffkit/cursor-agent-a2a) implements this pattern
 
 ## Streaming Strategy
@@ -117,11 +117,11 @@ cursor-selfhost/
 
 ## ORM Priority
 
-- **ORM with migrations** is more important than Deno vs Node
-- **Prefer Deno** if Drizzle + libsql works; **fallback to Node** if ORM is problematic
+- **ORM with migrations** is more important than runtime choice
+- **Bun** chosen: native TS, fast, better-sqlite3 works for local SQLite
 
 ## Open Questions
 
-- [ ] Deno + Drizzle + libsql: Verify; if not, switch to Node + Drizzle + better-sqlite3
-- [ ] Monorepo: Separate `deno.json` for api vs `package.json` for web, or unified setup
+- [x] Deno + Drizzle + libsql: libsql file: not supported in Deno; switched to Bun + better-sqlite3
+- [x] Monorepo: Unified pnpm-workspace; API uses Bun
 - [ ] Chat title generation: Use Cursor CLI with "summarize" prompt, or separate lightweight model?

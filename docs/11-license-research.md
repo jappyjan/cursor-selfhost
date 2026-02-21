@@ -28,11 +28,11 @@ All libraries in our stack permit use in proprietary or restrictively-licensed s
 | Package | License | Compatible? |
 |---------|---------|-------------|
 | React, Vite, Hono, nanoid | MIT | ✅ Yes — no restrictions on your license |
-| Drizzle, libsql | Apache 2.0 | ✅ Yes — attribution required; no copyleft |
+| Drizzle, better-sqlite3 | Apache 2.0 / MIT | ✅ Yes — attribution for Drizzle; no copyleft |
 | Tailwind, shadcn, Radix, TanStack Query, lucide-react | MIT | ✅ Yes |
 | Shiki, react-diff-viewer | MIT | ✅ Yes |
 | Fira Code | OFL (Open Font License) | ✅ Yes — font can be embedded; your app license is separate |
-| Deno | MIT | ✅ Yes |
+| Bun | MIT | ✅ Yes |
 
 **Conclusion**: Your tech stack does **not** restrict your choice of license. You can use PolyForm Noncommercial (or any license) for your own code.
 

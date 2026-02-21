@@ -6,40 +6,36 @@ Ordered tasks for the first MVP. Work through in sequence; some items can be par
 
 ## Phase 1: Project Setup
 
-- [ ] **1.1** Create monorepo structure
-  - [ ] `apps/web/` (React + Vite)
-  - [ ] `apps/api/` (Deno)
-  - [ ] `packages/db/` (Drizzle schema; shared or Deno)
-  - [ ] `packages/shared/` (types, constants)
-  - [ ] Root `pnpm-workspace.yaml` or equivalent
-- [ ] **1.2** Backend: `deno.json`, Hono app skeleton, env config
-- [ ] **1.3** Frontend: Vite + React, Tailwind, shadcn/ui init
-- [ ] **1.4** Verify Deno + Drizzle + libsql; if not, switch to Node + better-sqlite3
+- [x] **1.1** Create monorepo structure
+  - [x] `apps/web/` (React + Vite)
+  - [x] `apps/api/` (Bun)
+  - [x] `packages/db/` (Drizzle schema)
+  - [x] `packages/shared/` (types, constants)
+  - [x] Root `pnpm-workspace.yaml` or equivalent
+- [x] **1.2** Backend: Bun, Hono app skeleton, env config
+- [x] **1.3** Frontend: Vite + React, Tailwind, shadcn/ui init
+- [x] **1.4** Verify Deno + Drizzle + libsql; if not, switch to Node + better-sqlite3
+  - Switched to Bun + Drizzle + better-sqlite3 (libsql file: not supported in Deno).
 
 ---
 
 ## Phase 2: Database
 
-- [ ] **2.1** Define schema: `projects`, `chats`, `messages`, `app_config`
-  - Projects: id, slug, name, path, source_type, git_url, git_branch, timestamps
-  - Chats: id, project_id, title, session_id, timestamps
-  - Messages: id, chat_id, role, content, created_at
-  - app_config: projects_base_path, send_shortcut
-- [ ] **2.2** Create initial migration
-- [ ] **2.3** Run migrations on API startup (or CLI)
-- [ ] **2.4** Seed or default `app_config` if needed
+- [x] **2.1** Define schema: `projects`, `chats`, `messages`, `app_config`
+- [x] **2.2** Create initial migration
+- [x] **2.3** Run migrations on API startup (or CLI)
+- [x] **2.4** Seed or default `app_config` if needed
 
 ---
 
 ## Phase 3: Backend API — Core
 
-- [ ] **3.1** First-run check: `GET /api/config` or similar; return whether base dir is set
-- [ ] **3.2** Set base dir: `POST /api/config` or `PUT /api/config` — persist `projects_base_path`
-- [ ] **3.3** Browse: `GET /api/browse?path=...` — list dirs under base path only; validate path
-- [ ] **3.4** Projects CRUD: `POST /api/projects`, `GET /api/projects`, `GET /api/projects/by-slug/:slug`
-  - POST: create project (local path or git clone); generate slug from name; suffix if duplicate
-- [ ] **3.5** Chats: `POST /api/projects/:id/chats`, `GET /api/projects/:id/chats`, `GET /api/chats/:id`
-- [ ] **3.6** Messages: `GET /api/chats/:id/messages` (history)
+- [x] **3.1** First-run check: `GET /api/config`
+- [x] **3.2** Set base dir: `PUT /api/config`
+- [x] **3.3** Browse: `GET /api/browse?path=...`
+- [x] **3.4** Projects CRUD
+- [x] **3.5** Chats CRUD
+- [x] **3.6** Messages list
 
 ---
 
@@ -130,3 +126,11 @@ Phase 1 → Phase 2 → Phase 3 → Phase 4
 - `pnpm dev` or `pnpm run dev` — start API + web (or separate commands)
 - `pnpm db:migrate` — run migrations
 - `pnpm build` — build for production
+- `pnpm test` — run tests (API + DB)
+
+## Testing
+
+- **Policy**: All new code must have tests. See [docs/12-testing.md](12-testing.md).
+- **API**: `bun test` in apps/api (integration tests via app.fetch)
+- **DB**: `bun test` in packages/db
+- **E2E**: Phase 10.5

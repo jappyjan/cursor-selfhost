@@ -2,7 +2,7 @@
 
 ## Overview
 
-- **Database**: SQLite (via libsql `file:` protocol)
+- **Database**: SQLite (via better-sqlite3)
 - **ORM**: Drizzle ORM
 - **Migrations**: drizzle-kit; version-controlled migration files
 
@@ -85,7 +85,7 @@ Project ──┬──< Chat >──< Message
 
 ## ORM Model Examples (Pseudocode)
 
-### Drizzle (Deno + libsql)
+### Drizzle (Bun + better-sqlite3)
 
 ```ts
 import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";

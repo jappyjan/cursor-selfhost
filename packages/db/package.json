@@ -1,0 +1,27 @@
+{
+  "name": "@cursor-selfhost/db",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./src/client.ts",
+  "exports": {
+    ".": "./src/client.ts",
+    "./schema": "./src/schema.ts"
+  },
+  "scripts": {
+    "generate": "drizzle-kit generate",
+    "migrate": "drizzle-kit migrate",
+    "studio": "drizzle-kit studio",
+    "verify": "node verify.mjs",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.38.3",
+    "@libsql/client": "^0.14.0",
+    "better-sqlite3": "^11.6.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "drizzle-kit": "^0.30.1"
+  }
+}

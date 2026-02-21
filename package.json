@@ -1,0 +1,18 @@
+{
+  "name": "cursor-selfhost",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm run dev:api & pnpm run dev:web",
+    "dev:api": "pnpm --filter api dev:node",
+    "dev:web": "pnpm --filter web dev",
+    "build": "pnpm -r run build",
+    "db:migrate": "pnpm --filter db migrate",
+    "db:generate": "pnpm --filter db generate",
+    "test": "pnpm run test:api && pnpm --filter db test",
+    "test:api": "pnpm --filter api test"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  },
+  "packageManager": "pnpm@9.14.2"
+}

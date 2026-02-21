@@ -1,0 +1,22 @@
+{
+  "name": "api",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --hot main.ts",
+    "dev:node": "pnpm exec tsx watch main.ts",
+    "start": "bun run main.ts",
+    "start:node": "pnpm exec tsx main.ts",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "hono": "^4.6.0",
+    "@cursor-selfhost/db": "workspace:*",
+    "@hono/node-server": "^1.13.0",
+    "nanoid": "^5.0.9"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2"
+  }
+}

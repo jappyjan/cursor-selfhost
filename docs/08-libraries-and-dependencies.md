@@ -16,21 +16,21 @@ The Cursor CLI uses **stdio** (stdin/stdout):
 - **Session resume**: `--resume <sessionId>` — Cursor CLI supports this natively
 - **Install**: `curl https://cursor.com/install -fsS | bash`; auth via `cursor agent login` or `CURSOR_API_KEY`
 
-## Backend (Deno + TypeScript)
+## Backend (Bun + TypeScript)
 
 | Package | Purpose | Version | License | Status |
 |---------|---------|---------|---------|--------|
-| [Deno](https://deno.land/) | Runtime | Latest | MIT | ✅ Actively maintained |
+| [Bun](https://bun.sh/) | Runtime | Latest | MIT | ✅ Actively maintained, native TS |
 | [Hono](https://hono.dev/) | HTTP framework | Latest | MIT | ✅ Actively maintained, lightweight, streaming support |
 | [drizzle-orm](https://orm.drizzle.team/) | ORM | Latest | Apache 2.0 | ✅ 32k+ stars, actively maintained |
-| [@libsql/client](https://github.com/tursodatabase/libsql-client-ts) | SQLite driver (file + Turso) | Latest | Apache 2.0 | ✅ Drizzle-native; use `file:./db.sqlite` for local. *Verify Deno compatibility via `npm:` specifier* |
+| [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) | SQLite driver (Node/Bun) | Latest | MIT | ✅ Drizzle-native; local file support |
 | [drizzle-kit](https://github.com/drizzle-team/drizzle-kit) | Migrations | Latest | Apache 2.0 | ✅ Part of Drizzle ecosystem |
 | [nanoid](https://github.com/ai/nanoid) | UUIDs / IDs | v5 | MIT | ✅ Tiny, no deps |
 
 **Alternatives considered**:
 - **DenoDB**: Not actively maintained ⛔
 - **Oak**: Heavier than Hono; Hono has better DX and streaming
-- **better-sqlite3**: Node-native bindings; doesn't run in Deno. Use libsql instead.
+- **libsql**: Web build doesn't support `file:` URLs in Deno; we use better-sqlite3 with Bun.
 
 ## Frontend (React)
 
@@ -77,7 +77,7 @@ The Cursor CLI uses **stdio** (stdin/stdout):
 
 | Approach | Notes |
 |----------|-------|
-| `Deno.Command` | Spawn `git clone`; no extra deps |
+| `Bun.spawn` / `child_process` | Spawn `git clone`; no extra deps |
 | URL validation | Use `new URL()` or simple regex for `git@` and `https://` |
 
 ## Monorepo Tooling
@@ -87,12 +87,12 @@ The Cursor CLI uses **stdio** (stdin/stdout):
 | [pnpm](https://pnpm.io/) | Package manager, workspaces | MIT |
 | [Turbo](https://turbo.build/) (optional) | Build orchestration | MIT |
 
-*Note*: Frontend uses npm/pnpm (Vite/React); Backend uses Deno. May use separate roots or `deno.json` + `package.json` in monorepo.
+*Note*: Frontend uses npm/pnpm (Vite/React); Backend uses Bun. Unified pnpm-workspace.
 
 ## Version Pinning
 
 - Pin major versions in config files
-- Run `npm outdated` / `deno info` periodically
+- Run `npm outdated` / `bun outdated` periodically
 - Prefer `^` for minor/patch updates
 
 ## License Summary
