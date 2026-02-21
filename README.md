@@ -14,4 +14,4 @@ Self-hosted wrapper around the Cursor CLI — a chat-focused web UI to run AI-as
 
 ## License
 
-TBD
+PolyForm Noncommercial 1.0.0 — free for noncommercial use. Commercial licenses available. See [LICENSE](LICENSE).
