@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useParams } from "react-router-dom";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { AppShell } from "@/components/AppShell";
 import { Home } from "@/pages/Home";
@@ -51,6 +51,12 @@ function FirstRunGuard({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+/** Renders ChatView with key=chatId so each chat gets its own instance and loading state. */
+function ChatRoute() {
+  const { chatId } = useParams<{ chatId: string }>();
+  return <ChatView key={chatId} />;
+}
+
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
@@ -62,7 +68,7 @@ function App() {
               <Route path="setup" element={<Setup />} />
               <Route path="create" element={<CreateProject />} />
               <Route path="p/:slug" element={<ProjectView />} />
-              <Route path="p/:slug/c/:chatId" element={<ChatView />} />
+              <Route path="p/:slug/c/:chatId" element={<ChatRoute />} />
               <Route path="p/:slug/new" element={<NewChatView />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Route>

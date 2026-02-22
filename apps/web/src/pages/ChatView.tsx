@@ -66,7 +66,6 @@ export function ChatView() {
   const messagesScrollRef = useRef<HTMLDivElement>(null);
   const userAtBottomRef = useRef(true);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
-  const sendingToChatIdRef = useRef<string | null>(null);
 
   const SCROLL_THRESHOLD_PX = 120;
 
@@ -176,16 +175,15 @@ export function ChatView() {
         queryClient.invalidateQueries({ queryKey: ["chats"] }),
       ]);
       setStreamingBlocks([]);
-      if (sendingToChatIdRef.current === targetChatId) sendingToChatIdRef.current = null;
     },
-    onError: (err, { targetChatId }) => {
+    onError: (err) => {
       lastSentImageUrlsRef.current = [];
       setSendError((err as Error).message);
       setStreamingBlocks([]);
-      if (sendingToChatIdRef.current === targetChatId) sendingToChatIdRef.current = null;
     },
   });
 
+  /** Each chat has its own ChatView instance (keyed by chatId), so loading state is naturally per chat. */
   const isStreaming = sendMutation.isPending;
   const isCursorLoggedIn = cursorStatus?.ok === true;
 
@@ -197,7 +195,6 @@ export function ChatView() {
       lastSentImageUrlsRef.current = imagePreviewUrls ?? [];
       userAtBottomRef.current = true;
       setShowScrollToBottom(false);
-      sendingToChatIdRef.current = chatId;
       sendMutation.mutate({ content: text, files, targetChatId: chatId });
     },
     [isStreaming, sendMutation, chatId]
@@ -234,7 +231,8 @@ export function ChatView() {
     | { type: "assistant"; messageId: string; block: MessageBlock; isPulsing?: boolean }
     | { type: "assistant_legacy"; messageId: string; content: string; activities: { kind: string; label: string }[] | null };
 
-  const isViewingSendingChat = chatId && sendingToChatIdRef.current === chatId;
+  /** With keyed ChatView, we're always viewing the chat we're sending to when sending. */
+  const isViewingSendingChat = !!chatId && isStreaming;
 
   /** Collapse consecutive thinking blocks into one; pulse only while still receiving thinking (no next item yet). */
   function collapseThinkingItems(items: DisplayItem[]): DisplayItem[] {
