@@ -222,6 +222,19 @@ describe("API", () => {
       expect(json.length).toBe(0);
     });
 
+    it("POST /api/projects/:id/mcp-servers rejects invalid body (empty name)", async () => {
+      const res = await fetch(`/api/projects/${projectId}/mcp-servers`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "",
+          command: "npx",
+          args: [],
+        }),
+      });
+      expect(res.status).toBe(400);
+    });
+
     it("POST /api/projects/:id/mcp-servers creates server", async () => {
       const res = await fetch(`/api/projects/${projectId}/mcp-servers`, {
         method: "POST",
@@ -240,6 +253,41 @@ describe("API", () => {
       expect(json.command).toBe("npx");
       expect(json.enabled).toBe(true);
       expect(json.projectId).toBe(projectId);
+    });
+
+    it("GET /api/projects/:id/mcp-servers/status returns entries and cliAvailable", async () => {
+      const res = await fetch(`/api/projects/${projectId}/mcp-servers/status`);
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json).toHaveProperty("entries");
+      expect(Array.isArray(json.entries)).toBe(true);
+      expect(json).toHaveProperty("cliAvailable");
+      expect(typeof json.cliAvailable).toBe("boolean");
+    });
+
+    it("POST /api/projects/:id/mcp-servers/:serverId/login returns when CLI unavailable", async () => {
+      const listRes = await fetch(`/api/projects/${projectId}/mcp-servers`);
+      const list = await listRes.json();
+      const serverId = list[0].id;
+      const res = await fetch(`/api/projects/${projectId}/mcp-servers/${serverId}/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json).toHaveProperty("ok");
+      expect(json.ok).toBe(false);
+      expect(json.error).toContain("not available");
+    });
+
+    it("POST /api/projects/:id/mcp-servers/:serverId/login returns 404 for unknown server", async () => {
+      const res = await fetch(`/api/projects/${projectId}/mcp-servers/unknown-server/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      expect(res.status).toBe(404);
     });
 
     it("PATCH /api/projects/:id/mcp-servers/:serverId updates server", async () => {

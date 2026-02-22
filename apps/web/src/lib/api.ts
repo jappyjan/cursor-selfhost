@@ -150,6 +150,36 @@ export async function deleteMcpServer(projectId: string, serverId: string): Prom
   }
 }
 
+export type McpStatusEntry = { identifier: string; status: string; message?: string };
+
+export async function fetchMcpStatus(projectId: string): Promise<{
+  entries: McpStatusEntry[];
+  cliAvailable: boolean;
+}> {
+  const res = await fetch(`${API_BASE}/projects/${projectId}/mcp-servers/status`);
+  if (!res.ok) throw new Error("Failed to fetch MCP status");
+  return res.json();
+}
+
+export type McpLoginResult = { ok: boolean; authUrl?: string; error?: string };
+
+export async function loginMcpServer(
+  projectId: string,
+  serverId: string,
+  callbackUrl?: string
+): Promise<McpLoginResult> {
+  const res = await fetch(`${API_BASE}/projects/${projectId}/mcp-servers/${serverId}/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ callbackUrl }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((data as { error?: string }).error ?? "Login failed");
+  }
+  return data as McpLoginResult;
+}
+
 export async function createChat(projectId: string): Promise<Chat> {
   const res = await fetch(`${API_BASE}/projects/${projectId}/chats`, {
     method: "POST",

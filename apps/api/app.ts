@@ -19,6 +19,13 @@ import {
 } from "./src/cursor-cli";
 import { writeProjectMcpConfig } from "./src/mcp";
 import {
+  enableMcpServer,
+  disableMcpServer,
+  loginMcpServer,
+  listMcpServers,
+  canUseMcpCli,
+} from "./src/cursor-mcp";
+import {
   createProjectSchema,
   isPathUnderBase,
   isValidGitUrl,
@@ -326,6 +333,7 @@ app.post("/api/projects/:projectId/mcp-servers", async (c) => {
   const body = parsed.data;
   const id = nanoid();
   const now = new Date();
+  const enabled = body.enabled ?? true;
   await db.insert(schema.projectMcpServers).values({
     id,
     projectId,
@@ -333,13 +341,22 @@ app.post("/api/projects/:projectId/mcp-servers", async (c) => {
     command: body.command,
     args: JSON.stringify(body.args),
     env: body.env ? JSON.stringify(body.env) : null,
-    enabled: body.enabled ?? true,
+    enabled,
     sortOrder: 0,
     createdAt: now,
     updatedAt: now,
   });
   const rows = await db.select().from(schema.projectMcpServers).where(eq(schema.projectMcpServers.id, id));
-  return c.json(rows[0]);
+  const server = rows[0];
+  const project = projectRows[0];
+  if (enabled) {
+    await writeProjectMcpConfig(project.path, [server]);
+    const enableResult = await enableMcpServer(project.path, body.name);
+    if (!enableResult.ok) {
+      console.warn("MCP enable failed (config written):", enableResult.error);
+    }
+  }
+  return c.json(server);
 });
 
 app.patch("/api/projects/:projectId/mcp-servers/:serverId", async (c) => {
@@ -350,6 +367,9 @@ app.patch("/api/projects/:projectId/mcp-servers/:serverId", async (c) => {
     .from(schema.projectMcpServers)
     .where(eq(schema.projectMcpServers.id, serverId));
   if (rows.length === 0 || rows[0].projectId !== projectId) return c.json({ error: "MCP server not found" }, 404);
+  const current = rows[0];
+  const projectRows = await db.select().from(schema.projects).where(eq(schema.projects.id, projectId));
+  const project = projectRows[0];
   const body = await c.req.json<{ name?: string; command?: string; args?: string[]; env?: Record<string, string>; enabled?: boolean }>();
   const updates: Record<string, unknown> = { updatedAt: new Date() };
   if (body.name !== undefined) updates.name = body.name;
@@ -359,7 +379,21 @@ app.patch("/api/projects/:projectId/mcp-servers/:serverId", async (c) => {
   if (body.enabled !== undefined) updates.enabled = body.enabled;
   await db.update(schema.projectMcpServers).set(updates as Record<string, unknown>).where(eq(schema.projectMcpServers.id, serverId));
   const updated = await db.select().from(schema.projectMcpServers).where(eq(schema.projectMcpServers.id, serverId));
-  return c.json(updated[0]);
+  const updatedServer = updated[0];
+  const allServers = await db
+    .select()
+    .from(schema.projectMcpServers)
+    .where(eq(schema.projectMcpServers.projectId, projectId));
+  if (body.enabled === true) {
+    await writeProjectMcpConfig(project.path, allServers);
+    await enableMcpServer(project.path, updatedServer.name);
+  } else if (body.enabled === false) {
+    await disableMcpServer(project.path, current.name);
+    await writeProjectMcpConfig(project.path, allServers);
+  } else if (body.name !== undefined || body.command !== undefined || body.args !== undefined || body.env !== undefined) {
+    await writeProjectMcpConfig(project.path, allServers);
+  }
+  return c.json(updatedServer);
 });
 
 app.delete("/api/projects/:projectId/mcp-servers/:serverId", async (c) => {
@@ -370,8 +404,47 @@ app.delete("/api/projects/:projectId/mcp-servers/:serverId", async (c) => {
     .from(schema.projectMcpServers)
     .where(eq(schema.projectMcpServers.id, serverId));
   if (rows.length === 0 || rows[0].projectId !== projectId) return c.json({ error: "MCP server not found" }, 404);
+  const server = rows[0];
+  const projectRows = await db.select().from(schema.projects).where(eq(schema.projects.id, projectId));
+  const project = projectRows[0];
+  await disableMcpServer(project.path, server.name);
   await db.delete(schema.projectMcpServers).where(eq(schema.projectMcpServers.id, serverId));
+  const remaining = await db
+    .select()
+    .from(schema.projectMcpServers)
+    .where(eq(schema.projectMcpServers.projectId, projectId));
+  await writeProjectMcpConfig(project.path, remaining);
   return c.json({ ok: true });
+});
+
+app.get("/api/projects/:projectId/mcp-servers/status", async (c) => {
+  const projectId = c.req.param("projectId");
+  const projectRows = await db.select().from(schema.projects).where(eq(schema.projects.id, projectId));
+  if (projectRows.length === 0) return c.json({ error: "Project not found" }, 404);
+  const list = await listMcpServers(projectRows[0].path);
+  return c.json({ entries: list, cliAvailable: canUseMcpCli() });
+});
+
+app.post("/api/projects/:projectId/mcp-servers/:serverId/login", async (c) => {
+  const projectId = c.req.param("projectId");
+  const serverId = c.req.param("serverId");
+  const rows = await db
+    .select()
+    .from(schema.projectMcpServers)
+    .where(eq(schema.projectMcpServers.id, serverId));
+  if (rows.length === 0 || rows[0].projectId !== projectId) return c.json({ error: "MCP server not found" }, 404);
+  const projectRows = await db.select().from(schema.projects).where(eq(schema.projects.id, projectId));
+  const project = projectRows[0];
+  const body = await c.req.json<{ callbackUrl?: string }>().catch(() => ({}));
+  const result = await loginMcpServer(project.path, rows[0].name, body?.callbackUrl);
+  if (result.ok) {
+    return c.json({ ok: true, authUrl: result.authUrl });
+  }
+  return c.json({
+    ok: false,
+    error: result.error,
+    authUrl: result.authUrl,
+  });
 });
 
 // Chats

@@ -7,6 +7,7 @@ import {
   createMcpServer,
   updateMcpServer,
   deleteMcpServer,
+  loginMcpServer,
   type McpServer,
 } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -27,7 +28,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Settings, Plus, Pencil, Trash2, ArrowLeft } from "lucide-react";
+import { Settings, Plus, Pencil, Trash2, ArrowLeft, KeyRound } from "lucide-react";
 
 export function ProjectSettings() {
   const { slug } = useParams<{ slug: string }>();
@@ -35,6 +36,7 @@ export function ProjectSettings() {
   const [addOpen, setAddOpen] = useState(false);
   const [editing, setEditing] = useState<McpServer | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<McpServer | null>(null);
+  const [loginTarget, setLoginTarget] = useState<McpServer | null>(null);
 
   const { data: project, error } = useQuery({
     queryKey: ["project", slug],
@@ -73,6 +75,13 @@ export function ProjectSettings() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["mcp-servers", project?.id] });
       setDeleteTarget(null);
+    },
+  });
+  const loginMutation = useMutation({
+    mutationFn: ({ serverId, callbackUrl }: { serverId: string; callbackUrl?: string }) =>
+      loginMcpServer(project!.id, serverId, callbackUrl),
+    onSuccess: (data) => {
+      if (data.ok) setLoginTarget(null);
     },
   });
 
@@ -128,6 +137,7 @@ export function ProjectSettings() {
                   server={s}
                   onEdit={() => setEditing(s)}
                   onDelete={() => setDeleteTarget(s)}
+                  onAuthenticate={() => setLoginTarget(s)}
                   onToggleEnabled={(enabled) =>
                     updateMutation.mutate({ serverId: s.id, body: { enabled } })
                   }
@@ -182,6 +192,18 @@ export function ProjectSettings() {
           </AlertDialogContent>
         </AlertDialog>
       )}
+      {loginTarget && (
+        <McpLoginDialog
+          server={loginTarget}
+          onClose={() => setLoginTarget(null)}
+          onLogin={(callbackUrl) =>
+            loginMutation.mutate({ serverId: loginTarget.id, callbackUrl })
+          }
+          isPending={loginMutation.isPending}
+          result={loginMutation.data}
+          error={loginMutation.error}
+        />
+      )}
     </div>
   );
 }
@@ -190,11 +212,13 @@ function McpServerRow({
   server,
   onEdit,
   onDelete,
+  onAuthenticate,
   onToggleEnabled,
 }: {
   server: McpServer;
   onEdit: () => void;
   onDelete: () => void;
+  onAuthenticate: () => void;
   onToggleEnabled: (enabled: boolean) => void;
 }) {
   let args: string[] = [];
@@ -223,6 +247,9 @@ function McpServerRow({
         <p className="mt-1 truncate font-mono text-xs text-muted-foreground">{cmdDisplay}</p>
       </div>
       <div className="flex shrink-0 gap-1">
+        <Button variant="ghost" size="icon" onClick={onAuthenticate} aria-label="Authenticate">
+          <KeyRound className="h-4 w-4" />
+        </Button>
         <Button variant="ghost" size="icon" onClick={onEdit} aria-label="Edit">
           <Pencil className="h-4 w-4" />
         </Button>
@@ -231,6 +258,79 @@ function McpServerRow({
         </Button>
       </div>
     </li>
+  );
+}
+
+function McpLoginDialog({
+  server,
+  onClose,
+  onLogin,
+  isPending,
+  result,
+  error,
+}: {
+  server: McpServer;
+  onClose: () => void;
+  onLogin: (callbackUrl?: string) => void;
+  isPending: boolean;
+  result?: { ok: boolean; authUrl?: string; error?: string };
+  error: Error | null;
+}) {
+  const [callbackUrl, setCallbackUrl] = useState("");
+  const authUrl = result?.authUrl;
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Authenticate MCP server</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            Authenticate &quot;{server.name}&quot;. Some MCP servers require OAuth.
+          </p>
+          {authUrl && (
+            <div>
+              <label className="block text-sm font-medium">Open this URL to authenticate</label>
+              <a
+                href={authUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-1 block truncate text-sm text-primary underline"
+              >
+                {authUrl}
+              </a>
+            </div>
+          )}
+          <div>
+            <label className="block text-sm font-medium">
+              OAuth callback URL (paste after completing auth in browser)
+            </label>
+            <Input
+              value={callbackUrl}
+              onChange={(e) => setCallbackUrl(e.target.value)}
+              placeholder="https://..."
+              className="mt-1"
+            />
+          </div>
+          {result?.ok && <p className="text-sm text-green-600">Authentication successful.</p>}
+          {(result?.error || error) && (
+            <p className="text-sm text-destructive">{result?.error ?? (error as Error)?.message}</p>
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose}>
+              Close
+            </Button>
+            <Button
+              onClick={() => onLogin(callbackUrl.trim() || undefined)}
+              disabled={isPending}
+            >
+              {isPending ? "Authenticating…" : callbackUrl.trim() ? "Submit callback" : "Start login"}
+            </Button>
+          </DialogFooter>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

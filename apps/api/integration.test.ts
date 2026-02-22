@@ -167,6 +167,111 @@ async function consumeStream(res: Response, onChunk: (obj: StreamChunk) => void)
 
 const useMockCli = !process.env.RUN_E2E_WITH_REAL_CURSOR;
 
+describe("MCP servers (mock CLI)", () => {
+  it.skipIf(!useMockCli)("full MCP CRUD and message flow writes mcp.json", async () => {
+    await ensureConfig();
+    const uniqueDir = mkdtempSync(join(tmpdir(), "mcp-e2e-"));
+    const slug = `mcp-e2e-${Date.now()}`;
+    const projRes = await fetch("/api/projects", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sourceType: "local",
+        path: uniqueDir,
+        name: `MCP E2E ${slug}`,
+        slug,
+      }),
+    });
+    if (!projRes.ok) throw new Error(`Project create failed: ${await projRes.text()}`);
+    const project = await projRes.json();
+    const projectId = project.id;
+
+    const createRes = await fetch(`/api/projects/${projectId}/mcp-servers`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "filesystem",
+        command: "npx",
+        args: ["-y", "@modelcontextprotocol/server-filesystem", uniqueDir],
+        enabled: true,
+      }),
+    });
+    expect(createRes.status).toBe(200);
+    const server = await createRes.json();
+    expect(server.name).toBe("filesystem");
+
+    const listRes = await fetch(`/api/projects/${projectId}/mcp-servers`);
+    const list = await listRes.json();
+    expect(list).toHaveLength(1);
+
+    const statusRes = await fetch(`/api/projects/${projectId}/mcp-servers/status`);
+    const status = await statusRes.json();
+    expect(status).toHaveProperty("entries");
+    expect(status).toHaveProperty("cliAvailable");
+
+    const chatRes = await fetch(`/api/projects/${projectId}/chats`, { method: "POST" });
+    const chat = await chatRes.json();
+    const chatId = chat.id;
+
+    const msgRes = await fetch(`/api/chats/${chatId}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "Hello" }),
+    });
+    expect(msgRes.status).toBe(200);
+    await consumeStream(msgRes, () => {});
+
+    const { readFileSync, existsSync } = await import("fs");
+    const mcpPath = join(uniqueDir, ".cursor", "mcp.json");
+    expect(existsSync(mcpPath)).toBe(true);
+    const mcpContent = JSON.parse(readFileSync(mcpPath, "utf-8"));
+    expect(mcpContent.mcpServers.filesystem).toBeDefined();
+    expect(mcpContent.mcpServers.filesystem.command).toBe("npx");
+
+    const patchRes = await fetch(`/api/projects/${projectId}/mcp-servers/${server.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: false }),
+    });
+    expect(patchRes.status).toBe(200);
+
+    const deleteRes = await fetch(`/api/projects/${projectId}/mcp-servers/${server.id}`, {
+      method: "DELETE",
+    });
+    expect(deleteRes.status).toBe(200);
+
+    const listAfter = await fetch(`/api/projects/${projectId}/mcp-servers`).then((r) => r.json());
+    expect(listAfter).toHaveLength(0);
+  });
+
+  it.skipIf(!useMockCli)("MCP login returns error when CLI unavailable", async () => {
+    const { projectId } = await setupProjectAndChat();
+
+    const createRes = await fetch(`/api/projects/${projectId}/mcp-servers`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "test-mcp",
+        command: "npx",
+        args: ["-y", "some-mcp"],
+        enabled: true,
+      }),
+    });
+    if (createRes.status !== 200) return;
+    const server = await createRes.json();
+
+    const loginRes = await fetch(`/api/projects/${projectId}/mcp-servers/${server.id}/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(loginRes.status).toBe(200);
+    const loginData = await loginRes.json();
+    expect(loginData.ok).toBe(false);
+    expect(loginData.error).toContain("not available");
+  });
+});
+
 describe("Message streaming (mock CLI)", () => {
   it.skipIf(!useMockCli)("streams only assistant content, excludes user echo and tool calls", async () => {
     const { chatId } = await setupProjectAndChat();
