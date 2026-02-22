@@ -97,7 +97,7 @@ cursor-selfhost/
 
 ## Configuration
 
-- **Env vars**: `CURSOR_CLI_PATH`, `CURSOR_API_KEY` (or use `cursor agent login`), `DATABASE_PATH`
+- **Env vars**: `CURSOR_CLI_PATH`, `CURSOR_API_KEY` (or use `cursor agent login`), `DATABASE_PATH`, `ATTACHMENTS_BASE_PATH` (default: `~/.cursor-selfhosted/attachments`; image uploads stored here, outside project folders)
 - **Base path for git clones**: Picked in UI on first run; persisted. Env var `PROJECTS_BASE_PATH` can override default suggestion.
 - **Config file**: Optional `config.json` or `config.yaml` for overrides
 

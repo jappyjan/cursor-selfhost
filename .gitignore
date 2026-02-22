@@ -20,6 +20,9 @@ out/
 *.sqlite3
 **/data/
 
+# Attachments (stored outside projects; ignore any legacy in-repo copies)
+.cursor-attachments/
+
 # IDE
 .idea/
 .vscode/

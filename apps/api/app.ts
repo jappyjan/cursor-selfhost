@@ -2,11 +2,14 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { eq, desc } from "drizzle-orm";
 import path from "path";
+import { homedir } from "os";
 import { db } from "@cursor-selfhost/db";
 import * as schema from "@cursor-selfhost/db/schema";
 import { nanoid } from "nanoid";
+import { mkdir, writeFile } from "fs/promises";
 import {
   spawnCursorAgent,
+  buildAgentStdin,
   parseCursorLine,
   extractTextFromLine,
   isAssistantContent,
@@ -21,8 +24,20 @@ import {
 
 export const app = new Hono();
 
-// CORS for frontend
-app.use("/api/*", cors({ origin: ["http://localhost:5173", "http://127.0.0.1:5173"] }));
+// CORS for frontend (dev: common Vite ports; prod: same-origin via proxy)
+app.use(
+  "/api/*",
+  cors({
+    origin: [
+      "http://localhost:5173",
+      "http://127.0.0.1:5173",
+      "http://localhost:5174",
+      "http://127.0.0.1:5174",
+      "http://localhost:5175",
+      "http://127.0.0.1:5175",
+    ],
+  })
+);
 
 // Health check
 app.get("/api/health", (c) => c.json({ ok: true }));
@@ -343,6 +358,50 @@ app.delete("/api/chats/:id", async (c) => {
   }
 });
 
+// Image uploads — save outside project folder so they don't get committed
+const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+const ATTACHMENTS_BASE_PATH =
+  process.env.ATTACHMENTS_BASE_PATH?.trim() ||
+  path.join(homedir(), ".cursor-selfhosted", "attachments");
+
+app.post("/api/chats/:id/uploads", async (c) => {
+  const chatId = c.req.param("id");
+  const chatRows = await db.select().from(schema.chats).where(eq(schema.chats.id, chatId));
+  if (chatRows.length === 0) return c.json({ error: "Chat not found" }, 404);
+  const projectRows = await db.select().from(schema.projects).where(eq(schema.projects.id, chatRows[0].projectId));
+  if (projectRows.length === 0) return c.json({ error: "Project not found" }, 404);
+
+  let formData: FormData;
+  try {
+    formData = await c.req.formData();
+  } catch {
+    return c.json({ error: "Invalid form data" }, 400);
+  }
+
+  const files = formData.getAll("files").filter((f): f is File => f instanceof File);
+  if (files.length === 0) return c.json({ error: "No files provided" }, 400);
+
+  const uploadId = nanoid();
+  const dir = path.join(ATTACHMENTS_BASE_PATH, chatId, uploadId);
+  await mkdir(dir, { recursive: true });
+
+  const paths: string[] = [];
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) continue;
+    const ext = file.name.split(".").pop()?.toLowerCase() || "png";
+    const safeExt = ["png", "jpeg", "jpg", "gif", "webp"].includes(ext) ? ext : "png";
+    const filename = `image-${i}.${safeExt}`;
+    const filePath = path.join(dir, filename);
+    const buf = await file.arrayBuffer();
+    await writeFile(filePath, Buffer.from(buf));
+    paths.push(filePath);
+  }
+
+  if (paths.length === 0) return c.json({ error: "No valid image files" }, 400);
+  return c.json({ paths });
+});
+
 // Messages
 app.get("/api/chats/:id/messages", async (c) => {
   const id = c.req.param("id");
@@ -360,9 +419,17 @@ app.get("/api/cursor/status", async (c) => {
 // POST /api/chats/:id/messages — send message, stream response
 app.post("/api/chats/:id/messages", async (c) => {
   const chatId = c.req.param("id");
-  const body = await c.req.json<{ content: string }>();
-  const content = body?.content?.trim();
-  if (!content) return c.json({ error: "content required" }, 400);
+  const body = await c.req.json<{
+    content: string;
+    imagePaths?: string[];
+  }>();
+
+  const content = (typeof body?.content === "string" ? body.content : "").trim();
+  const imagePaths = Array.isArray(body?.imagePaths) ? body.imagePaths.filter((p): p is string => typeof p === "string") : undefined;
+
+  if (!content && (!imagePaths || imagePaths.length === 0)) {
+    return c.json({ error: "content or imagePaths required" }, 400);
+  }
 
   const chatRows = await db.select().from(schema.chats).where(eq(schema.chats.id, chatId));
   if (chatRows.length === 0) return c.json({ error: "Chat not found" }, 404);
@@ -372,18 +439,20 @@ app.post("/api/chats/:id/messages", async (c) => {
   if (projectRows.length === 0) return c.json({ error: "Project not found" }, 404);
   const project = projectRows[0];
 
-  // Persist user message
+  // Persist user message (text only; image paths not stored)
   const userMsgId = nanoid();
   const now = new Date();
+  const displayContent = content || (imagePaths?.length ? `[${imagePaths.length} image(s) attached]` : "");
   await db.insert(schema.messages).values({
     id: userMsgId,
     chatId,
     role: "user",
-    content,
+    content: displayContent,
     createdAt: now,
   });
 
-  const proc = spawnCursorAgent(content, {
+  const stdinPayload = buildAgentStdin(content, imagePaths);
+  const proc = spawnCursorAgent(stdinPayload, {
     workspace: project.path,
     resumeSessionId: chat.sessionId,
   });
