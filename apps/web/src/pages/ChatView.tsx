@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+import { useHeader } from "@/contexts/HeaderContext";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   fetchChat,
@@ -52,6 +53,7 @@ export function ChatView() {
   const { slug, chatId } = useParams<{ slug: string; chatId: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { setTitle, setActions } = useHeader();
   const [input, setInput] = useState("");
   const [streamingBlocks, setStreamingBlocks] = useState<MessageBlock[]>([]);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -295,6 +297,34 @@ export function ChatView() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.length, streamingBlocks.length, isStreaming]);
 
+  useEffect(() => {
+    if (!chat || !project) {
+      setTitle(undefined);
+      setActions(null);
+      return;
+    }
+    setTitle(`${project.name} › ${chat.title ?? "New chat"}`);
+    setActions(
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="icon" className="h-8 w-8">
+            <MoreVertical className="h-4 w-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onClick={openRenameDialog}>Rename</DropdownMenuItem>
+          <DropdownMenuItem onClick={() => setDeleteOpen(true)} className="text-destructive">
+            Delete
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
+    return () => {
+      setTitle(undefined);
+      setActions(null);
+    };
+  }, [chat, project, openRenameDialog, setTitle, setActions]);
+
   if (error || !chat) {
     return (
       <div className="flex h-full items-center justify-center p-8">
@@ -307,26 +337,6 @@ export function ChatView() {
 
   return (
     <div className="flex h-full flex-col">
-      {/* Chat header: Project › Chat with menu */}
-      <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-2">
-        <h2 className="font-mono text-sm font-medium">
-          {project?.name ?? slug} › {chat.title ?? "New chat"}
-        </h2>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" className="h-8 w-8">
-              <MoreVertical className="h-4 w-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={openRenameDialog}>Rename</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setDeleteOpen(true)} className="text-destructive">
-              Delete
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-
       {/* Messages area */}
       <div className="flex-1 overflow-y-auto p-6">
         <div className="mx-auto max-w-3xl space-y-3">

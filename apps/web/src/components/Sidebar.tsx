@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Plus, ChevronRight, ChevronDown, MessageSquare, Folder } from "lucide-react";
@@ -9,6 +9,8 @@ import { fetchProjects, fetchChats, type Project, type Chat } from "@/lib/api";
 
 interface SidebarProps {
   collapsed: boolean;
+  isMobile?: boolean;
+  onClose?: () => void;
   className?: string;
 }
 
@@ -73,22 +75,26 @@ function ChatLink({ chat, projectSlug, active }: { chat: Chat; projectSlug: stri
   );
 }
 
-export function Sidebar({ collapsed, className }: SidebarProps) {
+export function Sidebar({ collapsed, isMobile, onClose, className }: SidebarProps) {
   const [search, setSearch] = useState("");
+  const location = useLocation();
   const { data: projects = [] } = useQuery({
     queryKey: ["projects"],
     queryFn: fetchProjects,
   });
 
+  const prevPath = useRef(location.pathname);
+  useEffect(() => {
+    if (prevPath.current !== location.pathname) {
+      prevPath.current = location.pathname;
+      if (isMobile && onClose) onClose();
+    }
+  }, [location.pathname, isMobile, onClose]);
+
   if (collapsed) return null;
 
-  return (
-    <aside
-      className={cn(
-        "flex w-64 shrink-0 flex-col border-r border-border bg-muted/30",
-        className
-      )}
-    >
+  const content = (
+    <>
       <div className="flex flex-col gap-2 p-2">
         <Link to="/create">
           <Button className="w-full" size="sm">
@@ -110,6 +116,37 @@ export function Sidebar({ collapsed, className }: SidebarProps) {
           ))}
         </div>
       </nav>
+    </>
+  );
+
+  if (isMobile) {
+    return (
+      <>
+        <div
+          className="fixed inset-0 z-40 bg-black/50"
+          onClick={onClose}
+          aria-hidden="true"
+        />
+        <aside
+          className={cn(
+            "fixed left-0 top-14 bottom-0 z-50 flex w-64 flex-col border-r border-border bg-background",
+            className
+          )}
+        >
+          {content}
+        </aside>
+      </>
+    );
+  }
+
+  return (
+    <aside
+      className={cn(
+        "flex w-64 shrink-0 flex-col border-r border-border bg-muted/30",
+        className
+      )}
+    >
+      {content}
     </aside>
   );
 }
