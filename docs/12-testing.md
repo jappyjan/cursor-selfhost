@@ -59,7 +59,7 @@ pnpm --filter db test   # DB package only
 | Integration: chat isolation (sessions, no cross-chat mixing) | ✅ |
 | DB: migrations | ✅ |
 | DB: ensureAppConfigDefaults | ✅ |
-| Frontend | ⬜ (Phase 5+) |
+| Frontend | ⬜ (no component/E2E tests yet) |
 | E2E | ⬜ (Phase 10.5) |
 
 ---
@@ -80,3 +80,4 @@ pnpm --filter db test   # DB package only
 |------|--------|
 | 2025-02 | Initial testing policy; API and DB tests added |
 | 2025-02 | Cursor CLI unit tests (`cursor-cli.test.ts`); session isolation integration tests; mock `createCursorSession` in app tests |
+| 2025-02 | Coverage table: clarified Frontend/E2E status; full MVP UI shipped |

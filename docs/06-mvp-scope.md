@@ -91,6 +91,6 @@
 ## MVP Deliverables
 
 1. **Runnable app**: Single command to start (e.g. `pnpm dev` or `docker compose up`)
-2. **Web UI**: Accessible at `http://localhost:3000` (or configurable)
+2. **Web UI**: Accessible at `http://localhost:5173` (Vite dev); API at `http://localhost:3001`
 3. **E2E flow**: [+ Create] → Git clone → Project + chat → Send message → See streamed response
 4. **Persistence**: Restart app → Open existing chat → See history

@@ -17,6 +17,7 @@ This directory contains structured planning documents for the self-hosted Cursor
 | [09-implementation-plan.md](./09-implementation-plan.md) | Ordered MVP implementation tasks |
 | [10-implementation-status.md](./10-implementation-status.md) | Track what's implemented; reference for planning |
 | [11-license-research.md](./11-license-research.md) | License research: non-commercial + Cursor ToS |
+| [12-testing.md](./12-testing.md) | Testing policy, coverage, and run instructions |
 
 ## How to Use
 

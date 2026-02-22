@@ -11,7 +11,7 @@ import {
   extractTextFromLine,
   isAssistantContent,
   isActivityContent,
-  extractActivityLabel,
+  extractActivityInfo,
 } from "./src/cursor-cli";
 import {
   createProjectSchema,
@@ -389,7 +389,7 @@ app.post("/api/chats/:id/messages", async (c) => {
   });
 
   let sessionId: string | null = null;
-  type Block = { type: "text"; content: string } | { type: "activity"; kind: string; label: string };
+  type Block = { type: "text"; content: string } | { type: "activity"; kind: string; label: string; details?: string };
   const blocks: Block[] = [];
   let resultContent: string | null = null; // fallback when Cursor sends only result (no assistant chunks)
   let stderrBuffer = "";
@@ -416,18 +416,23 @@ app.post("/api/chats/:id/messages", async (c) => {
           /* already closed */
         }
       };
+      let ndjsonBuffer = "";
       const onData = (chunk: Buffer) => {
-        const text = chunk.toString("utf-8");
-        const lines = text.split("\n").filter((l) => l.trim());
+        ndjsonBuffer += chunk.toString("utf-8");
+        const lines = ndjsonBuffer.split("\n");
+        ndjsonBuffer = lines.pop() ?? "";
         for (const line of lines) {
-          const parsed = parseCursorLine(line);
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          const parsed = parseCursorLine(trimmed);
           if (!parsed) continue;
           if (parsed.session_id) sessionId = parsed.session_id;
           // Activity (tool_call, thinking): add block, emit for UI
           if (isActivityContent(parsed)) {
-            const label = extractActivityLabel(parsed);
-            blocks.push({ type: "activity", kind: parsed.type, label });
-            safeEnqueue(new TextEncoder().encode(JSON.stringify({ type: "block", block: { type: "activity", kind: parsed.type, label } }) + "\n"));
+            const { label, details } = extractActivityInfo(parsed);
+            const block = { type: "activity" as const, kind: parsed.type, label, ...(details && { details }) };
+            blocks.push(block);
+            safeEnqueue(new TextEncoder().encode(JSON.stringify({ type: "block", block }) + "\n"));
             continue;
           }
           // Assistant chunks: append to last text block or create new one
@@ -457,6 +462,29 @@ app.post("/api/chats/:id/messages", async (c) => {
       };
       proc.stdout?.on("data", onData);
       proc.on("close", async (code) => {
+        const trimmed = ndjsonBuffer.trim();
+        if (trimmed) {
+          const parsed = parseCursorLine(trimmed);
+          if (parsed) {
+            if (parsed.session_id) sessionId = parsed.session_id;
+            if (isActivityContent(parsed)) {
+              const { label, details } = extractActivityInfo(parsed);
+              const block = { type: "activity" as const, kind: parsed.type, label, ...(details && { details }) };
+              blocks.push(block);
+              safeEnqueue(new TextEncoder().encode(JSON.stringify({ type: "block", block }) + "\n"));
+            } else if (isAssistantContent(parsed)) {
+              const extracted = extractTextFromLine(parsed);
+              if (extracted) {
+                const last = blocks[blocks.length - 1];
+                if (last?.type === "text") last.content += extracted;
+                else blocks.push({ type: "text", content: extracted });
+                safeEnqueue(new TextEncoder().encode(JSON.stringify({ type: "block", block: { type: "text", content: extracted } }) + "\n"));
+              }
+            } else if (parsed.type === "result" && parsed.result) {
+              resultContent = parsed.result;
+            }
+          }
+        }
         const textBlocks = blocks.filter((b): b is { type: "text"; content: string } => b.type === "text");
         const fullContent = textBlocks.length > 0 ? textBlocks.map((b) => b.content).join("") : (resultContent ?? "");
         if (code !== 0 && !sessionId && textBlocks.length === 0) {

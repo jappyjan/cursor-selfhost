@@ -16,6 +16,8 @@ import {
   isAssistantContent,
   isActivityContent,
   extractActivityLabel,
+  extractActivityInfo,
+  parseToolCall,
   createCursorSession,
   spawnCursorAgent,
 } from "./cursor-cli";
@@ -72,6 +74,211 @@ describe("isActivityContent", () => {
     expect(isActivityContent({ type: "user" })).toBe(false);
     expect(isActivityContent({ type: "result" })).toBe(false);
     expect(isActivityContent({ type: "system" })).toBe(false);
+  });
+});
+
+describe("parseToolCall", () => {
+  it("returns null for non-tool text", () => {
+    expect(parseToolCall("hello")).toBeNull();
+    expect(parseToolCall("")).toBeNull();
+    expect(parseToolCall("[Tool:")).toBeNull();
+  });
+  it("parses tool name only", () => {
+    const r = parseToolCall("[Tool: list_dir]");
+    expect(r).toEqual({ toolName: "list_dir", args: {} });
+  });
+  it("parses path=value", () => {
+    const r = parseToolCall("[Tool: read_file path=/tmp/foo.ts]");
+    expect(r).toEqual({ toolName: "read_file", args: { path: "/tmp/foo.ts" } });
+  });
+  it("parses multiple key=value args", () => {
+    const r = parseToolCall("[Tool: search_replace path=src/a.ts old_string=foo new_string=bar]");
+    expect(r?.toolName).toBe("search_replace");
+    expect(r?.args.path).toBe("src/a.ts");
+    expect(r?.args.old_string).toBe("foo");
+    expect(r?.args.new_string).toBe("bar");
+  });
+  it("parses quoted values with spaces", () => {
+    const r = parseToolCall('[Tool: run_terminal_cmd command="npm run build"]');
+    expect(r).toEqual({ toolName: "run_terminal_cmd", args: { command: "npm run build" } });
+  });
+  it("parses file_path alias", () => {
+    const r = parseToolCall("[Tool: write file_path=dist/index.js]");
+    expect(r?.args.file_path).toBe("dist/index.js");
+  });
+  it("returns null for malformed tool text", () => {
+    expect(parseToolCall("[Tool:")).toBeNull();
+    expect(parseToolCall("Tool: read_file]")).toBeNull();
+    expect(parseToolCall("[Tool")).toBeNull();
+  });
+});
+
+describe("extractActivityInfo", () => {
+  it("returns label + details for read_file with path", () => {
+    const info = extractActivityInfo({
+      type: "tool_call",
+      message: { content: [{ text: "[Tool: read_file path=/tmp/foo.ts]" }] },
+    });
+    expect(info.label).toBe("Tool: read_file");
+    expect(info.details).toBe("path: /tmp/foo.ts");
+  });
+  it("returns label + details for search_replace", () => {
+    const info = extractActivityInfo({
+      type: "tool_call",
+      message: { content: [{ text: "[Tool: search_replace path=src/x.ts old_string=foo new_string=bar]" }] },
+    });
+    expect(info.label).toBe("Tool: search_replace");
+    expect(info.details).toContain("path: src/x.ts");
+    expect(info.details).toContain("old: foo");
+  });
+  it("returns label + details for run_terminal_cmd", () => {
+    const info = extractActivityInfo({
+      type: "tool_call",
+      message: { content: [{ text: '[Tool: run_terminal_cmd command="npm test"]' }] },
+    });
+    expect(info.label).toBe("Tool: run_terminal_cmd");
+    expect(info.details).toBe('cmd: npm test');
+  });
+  it("returns label + details for edit with diff", () => {
+    const info = extractActivityInfo({
+      type: "tool_call",
+      message: { content: [{ text: '[Tool: edit path=src/a.ts diff="-old+new"]' }] },
+    });
+    expect(info.label).toBe("Tool: edit");
+    expect(info.details).toContain("path: src/a.ts");
+    expect(info.details).toContain("diff:");
+  });
+  it("extracts from OpenAI-style function content (name + arguments JSON)", () => {
+    const info = extractActivityInfo({
+      type: "tool_call",
+      message: {
+        content: [{ type: "function", name: "read_file", arguments: '{"path":"/tmp/foo.ts"}' }],
+      },
+    });
+    expect(info.label).toBe("Tool: read_file");
+    expect(info.details).toBe("path: /tmp/foo.ts");
+  });
+  it("extracts from tool_use content with input object", () => {
+    const info = extractActivityInfo({
+      type: "tool_call",
+      message: {
+        content: [{ type: "tool_use", name: "search_replace", input: { path: "src/a.ts", old_string: "x" } }],
+      },
+    });
+    expect(info.label).toBe("Tool: search_replace");
+    expect(info.details).toContain("path: src/a.ts");
+  });
+  it("extracts from Cursor CLI tool_call.shellToolCall format", () => {
+    const info = extractActivityInfo({
+      type: "tool_call",
+      tool_call: {
+        shellToolCall: { args: { command: "ls -la /tmp", workingDirectory: "" } },
+      },
+    } as Parameters<typeof extractActivityInfo>[0]);
+    expect(info.label).toBe("Tool: run_terminal_cmd");
+    expect(info.details).toBe("cmd: ls -la /tmp");
+  });
+  it("extracts from Cursor CLI tool_call.readToolCall format", () => {
+    const info = extractActivityInfo({
+      type: "tool_call",
+      tool_call: {
+        readToolCall: { args: { path: "/home/user/app/package.json", limit: 5 } },
+      },
+    } as Parameters<typeof extractActivityInfo>[0]);
+    expect(info.label).toBe("Tool: read_file");
+    expect(info.details).toBe("path: /home/user/app/package.json");
+  });
+  it("extracts from Cursor CLI tool_call.grepToolCall format", () => {
+    const info = extractActivityInfo({
+      type: "tool_call",
+      tool_call: {
+        grepToolCall: { args: { pattern: "TODO", path: "/home/user/proj" } },
+      },
+    } as Parameters<typeof extractActivityInfo>[0]);
+    expect(info.label).toBe("Tool: grep");
+    expect(info.details).toContain("pattern: TODO");
+    expect(info.details).toContain("path:");
+  });
+  it("extracts from unknown tool key (fallback)", () => {
+    const info = extractActivityInfo({
+      type: "tool_call",
+      tool_call: {
+        customToolCall: { args: { path: "src/foo.ts" } },
+      },
+    } as Parameters<typeof extractActivityInfo>[0]);
+    expect(info.label).toBe("Tool: custom");
+    expect(info.details).toBe("path: src/foo.ts");
+  });
+  it("extracts from Cursor CLI tool_call.editToolCall format", () => {
+    const info = extractActivityInfo({
+      type: "tool_call",
+      tool_call: {
+        editToolCall: { args: { path: "src/foo.ts", streamContent: "// edit" } },
+      },
+    } as Parameters<typeof extractActivityInfo>[0]);
+    expect(info.label).toBe("Tool: edit");
+    expect(info.details).toBe("path: src/foo.ts");
+  });
+  it("extracts from top-level tool_name", () => {
+    const info = extractActivityInfo({
+      type: "tool_call",
+      tool_name: "run_terminal_cmd",
+      message: { content: [] },
+    } as Parameters<typeof extractActivityInfo>[0]);
+    expect(info.label).toBe("Tool: run_terminal_cmd");
+  });
+  it("returns label only for tools without extra info", () => {
+    const info = extractActivityInfo({
+      type: "tool_call",
+      message: { content: [{ text: "[Tool: list_dir]" }] },
+    });
+    expect(info.label).toBe("Tool: list_dir");
+    expect(info.details).toBeUndefined();
+  });
+  it("returns label + details for grep with pattern and path", () => {
+    const info = extractActivityInfo({
+      type: "tool_call",
+      message: { content: [{ text: "[Tool: grep pattern=function path=src/]" }] },
+    });
+    expect(info.label).toBe("Tool: grep");
+    expect(info.details).toContain("pattern: function");
+    expect(info.details).toContain("path:");
+  });
+  it("returns label + details for write with path", () => {
+    const info = extractActivityInfo({
+      type: "tool_call",
+      message: { content: [{ text: "[Tool: write path=dist/output.js]" }] },
+    });
+    expect(info.label).toBe("Tool: write");
+    expect(info.details).toBe("path: dist/output.js");
+  });
+  it("returns label + details for delete_file", () => {
+    const info = extractActivityInfo({
+      type: "tool_call",
+      message: { content: [{ text: "[Tool: delete_file path=tmp/cache]" }] },
+    });
+    expect(info.label).toBe("Tool: delete_file");
+    expect(info.details).toBe("path: tmp/cache");
+  });
+  it("truncates long details to max 80 chars", () => {
+    const longPath = "/a/" + "x".repeat(100);
+    const info = extractActivityInfo({
+      type: "tool_call",
+      message: { content: [{ text: `[Tool: read_file path=${longPath}]` }] },
+    });
+    expect(info.details).toHaveLength(81);
+    expect(info.details).toMatch(/…$/);
+  });
+  it("returns Thinking… for thinking type", () => {
+    const info = extractActivityInfo({ type: "thinking", message: { content: [{ text: "..." }] } });
+    expect(info.label).toBe("Thinking…");
+    expect(info.details).toBeUndefined();
+  });
+  it("truncates long non-tool text", () => {
+    const long = "x".repeat(80);
+    const info = extractActivityInfo({ type: "tool_result", message: { content: [{ text: long }] } });
+    expect(info.label).toHaveLength(61);
+    expect(info.label).toMatch(/…$/);
   });
 });
 

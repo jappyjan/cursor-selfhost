@@ -32,6 +32,7 @@ Thumbs.db
 memory
 
 # Logs
+logs/
 *.log
 npm-debug.log*
 pnpm-debug.log*

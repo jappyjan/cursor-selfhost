@@ -1,3 +1,5 @@
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { CodeBlock } from "./CodeBlock";
 
 interface Part {
@@ -70,16 +72,55 @@ export function MessageContent({ content, className, isStreaming }: MessageConte
     <div className={className}>
       {parts.map((part, i) =>
         part.type === "text" ? (
-          <div
-            key={i}
-            className="whitespace-pre-wrap break-words font-mono text-sm [&_p]:my-2"
-          >
-            {part.content}
+          <div key={i} className="markdown-content break-words text-sm">
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+                p: ({ children }) => <p className="my-2 last:mb-0">{children}</p>,
+                ul: ({ children }) => <ul className="my-2 list-disc pl-6 [&>li]:my-0.5">{children}</ul>,
+                ol: ({ children }) => <ol className="my-2 list-decimal pl-6 [&>li]:my-0.5">{children}</ol>,
+                li: ({ children }) => <li className="break-words">{children}</li>,
+                strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+                em: ({ children }) => <em className="italic">{children}</em>,
+                code: ({ className, children }) =>
+                  className ? (
+                    <code className={className}>{children}</code>
+                  ) : (
+                    <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[0.9em]">{children}</code>
+                  ),
+                pre: ({ children }) => <pre className="my-2 overflow-x-auto rounded-lg bg-muted p-3 font-mono text-sm">{children}</pre>,
+                blockquote: ({ children }) => (
+                  <blockquote className="my-2 border-l-2 border-muted-foreground/30 pl-4 text-muted-foreground">
+                    {children}
+                  </blockquote>
+                ),
+                h1: ({ children }) => <h1 className="mt-4 mb-2 text-lg font-semibold">{children}</h1>,
+                h2: ({ children }) => <h2 className="mt-3 mb-1.5 text-base font-semibold">{children}</h2>,
+                h3: ({ children }) => <h3 className="mt-2 mb-1 text-sm font-semibold">{children}</h3>,
+                a: ({ href, children }) => (
+                  <a href={href} target="_blank" rel="noopener noreferrer" className="text-primary underline hover:no-underline">
+                    {children}
+                  </a>
+                ),
+                hr: () => <hr className="my-3 border-border" />,
+                table: ({ children }) => (
+                  <div className="my-2 overflow-x-auto">
+                    <table className="min-w-full border-collapse border border-border">{children}</table>
+                  </div>
+                ),
+                th: ({ children }) => (
+                  <th className="border border-border bg-muted/50 px-3 py-1.5 text-left font-medium">{children}</th>
+                ),
+                td: ({ children }) => <td className="border border-border px-3 py-1.5">{children}</td>,
+              }}
+            >
+              {part.content}
+            </ReactMarkdown>
             {i === parts.length - 1 && hasTrailingNewlines && (
-              <>
+              <span className="inline-flex items-center">
                 {" "}
                 <TypingIndicator />
-              </>
+              </span>
             )}
           </div>
         ) : (

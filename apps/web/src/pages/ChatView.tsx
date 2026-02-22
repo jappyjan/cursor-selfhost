@@ -109,7 +109,10 @@ export function ChatView() {
           });
         }
         if (chunk.type === "activity") {
-          setStreamingBlocks((prev) => [...prev, { type: "activity" as const, kind: chunk.kind, label: chunk.label }]);
+          setStreamingBlocks((prev) => [
+            ...prev,
+            { type: "activity" as const, kind: chunk.kind, label: chunk.label, ...(chunk.details && { details: chunk.details }) },
+          ]);
         }
         if (chunk.type === "error") setSendError(chunk.error);
       });
@@ -399,16 +402,24 @@ export function ChatView() {
                 }
                 if (item.block.type === "activity") {
                   const pulsing = "isPulsing" in item && item.isPulsing;
+                  const tooltip = [item.block.kind, item.block.details].filter(Boolean).join(" · ");
                   return (
                     <div
                       key={`${item.messageId}-${idx}`}
                       className="text-xs text-muted-foreground/80 py-0"
-                      title={item.block.kind}
+                      title={tooltip}
                     >
                       {item.block.kind === "thinking" && pulsing ? (
                         <TypingIndicator />
                       ) : (
-                        item.block.label
+                        <>
+                          {item.block.label}
+                          {item.block.details && (
+                            <span className="ml-1.5 text-muted-foreground/60 truncate max-w-[200px] inline-block align-bottom" title={item.block.details}>
+                              ({item.block.details})
+                            </span>
+                          )}
+                        </>
                       )}
                     </div>
                   );

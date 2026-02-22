@@ -177,12 +177,12 @@ export async function deleteChat(chatId: string): Promise<void> {
 
 export type MessageBlock =
   | { type: "text"; content: string }
-  | { type: "activity"; kind: string; label: string };
+  | { type: "activity"; kind: string; label: string; details?: string };
 
 export type StreamChunk =
   | { type: "block"; block: MessageBlock }
   | { type: "chunk"; content: string }
-  | { type: "activity"; kind: string; label: string }
+  | { type: "activity"; kind: string; label: string; details?: string }
   | { type: "done"; sessionId: string | null }
   | { type: "error"; error: string };
 
@@ -196,6 +196,7 @@ export async function sendMessageStreaming(
     content?: string;
     kind?: string;
     label?: string;
+    details?: string;
     sessionId?: string | null;
     error?: string;
     block?: MessageBlock;
@@ -225,7 +226,7 @@ export async function sendMessageStreaming(
         const parsed = JSON.parse(line) as ParsedChunk;
         if (parsed.type === "block" && parsed.block) onChunk({ type: "block", block: parsed.block });
         else if (parsed.type === "chunk") onChunk({ type: "chunk", content: parsed.content ?? "" });
-        else if (parsed.type === "activity") onChunk({ type: "activity", kind: parsed.kind ?? "", label: parsed.label ?? "" });
+        else if (parsed.type === "activity") onChunk({ type: "activity", kind: parsed.kind ?? "", label: parsed.label ?? "", ...(parsed.details && { details: parsed.details }) });
         else if (parsed.type === "done") onChunk({ type: "done", sessionId: parsed.sessionId ?? null });
         else if (parsed.type === "error") onChunk({ type: "error", error: parsed.error ?? "" });
       } catch (e) {
@@ -238,7 +239,7 @@ export async function sendMessageStreaming(
       const parsed = JSON.parse(buffer) as ParsedChunk;
       if (parsed.type === "block" && parsed.block) onChunk({ type: "block", block: parsed.block });
       else if (parsed.type === "chunk") onChunk({ type: "chunk", content: parsed.content ?? "" });
-      else if (parsed.type === "activity") onChunk({ type: "activity", kind: parsed.kind ?? "", label: parsed.label ?? "" });
+      else if (parsed.type === "activity") onChunk({ type: "activity", kind: parsed.kind ?? "", label: parsed.label ?? "", ...(parsed.details && { details: parsed.details }) });
       else if (parsed.type === "done") onChunk({ type: "done", sessionId: parsed.sessionId ?? null });
       else if (parsed.type === "error") onChunk({ type: "error", error: parsed.error ?? "" });
     } catch (e) {

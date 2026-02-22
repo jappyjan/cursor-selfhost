@@ -119,7 +119,8 @@ async function consumeStream(
     sessionId?: string | null;
     kind?: string;
     label?: string;
-    block?: { type: string; content?: string; kind?: string; label?: string };
+    details?: string;
+    block?: { type: string; content?: string; kind?: string; label?: string; details?: string };
   }) => void
 ): Promise<void> {
   const reader = res.body?.getReader();
@@ -219,15 +220,51 @@ describe("Message streaming (mock CLI)", () => {
     });
     expect(res.status).toBe(200);
 
-    const activities: { kind: string; label: string }[] = [];
+    const activities: { kind: string; label: string; details?: string }[] = [];
     await consumeStream(res, (obj) => {
-      if (obj.type === "block" && obj.block?.type === "activity") activities.push({ kind: obj.block.kind ?? "", label: obj.block.label ?? "" });
-      if (obj.type === "activity") activities.push({ kind: obj.kind ?? "", label: obj.label ?? "" });
+      if (obj.type === "block" && obj.block?.type === "activity")
+        activities.push({
+          kind: obj.block.kind ?? "",
+          label: obj.block.label ?? "",
+          details: obj.block.details,
+        });
+      if (obj.type === "activity")
+        activities.push({ kind: obj.kind ?? "", label: obj.label ?? "", details: obj.details });
     });
 
     expect(activities.some((a) => a.kind === "thinking")).toBe(true);
     expect(activities.some((a) => a.kind === "tool_call")).toBe(true);
     expect(activities.some((a) => a.label.includes("read_file"))).toBe(true);
+  });
+
+  it.skipIf(!useMockCli)("emits tool call details (path, file) for richer display", async () => {
+    const { chatId } = await setupProjectAndChat();
+    const res = await fetch(`/api/chats/${chatId}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "Test" }),
+    });
+    expect(res.status).toBe(200);
+
+    const activities: { kind: string; label: string; details?: string }[] = [];
+    await consumeStream(res, (obj) => {
+      if (obj.type === "block" && obj.block?.type === "activity")
+        activities.push({
+          kind: obj.block.kind ?? "",
+          label: obj.block.label ?? "",
+          details: obj.block.details,
+        });
+    });
+
+    const readFile = activities.find((a) => a.label.includes("read_file"));
+    expect(readFile).toBeDefined();
+    expect(readFile?.details).toContain("path:");
+    expect(readFile?.details).toContain("/tmp/foo.ts");
+
+    const searchReplace = activities.find((a) => a.label.includes("search_replace"));
+    expect(searchReplace).toBeDefined();
+    expect(searchReplace?.details).toContain("path:");
+    expect(searchReplace?.details).toContain("src/index.ts");
   });
 
   it.skipIf(!useMockCli)("persists content without duplication (no result echo)", async () => {
@@ -256,6 +293,10 @@ describe("Message streaming (mock CLI)", () => {
     const texts = blocks.filter((b: { type: string }) => b.type === "text");
     expect(activities.some((a: { kind: string }) => a.kind === "tool_call")).toBe(true);
     expect(activities.some((a: { kind: string }) => a.kind === "thinking")).toBe(true);
+    const toolActivity = activities.find((a: { kind: string }) => a.kind === "tool_call");
+    expect(toolActivity?.label).toBeDefined();
+    expect(toolActivity?.label).not.toBe("tool_call");
+    expect(toolActivity?.details).toBeDefined();
     expect(texts.length).toBeGreaterThan(0);
     expect(texts[0].content).toContain("[ASSISTANT_REPLY]");
   });
@@ -600,6 +641,55 @@ describe("E2E with real Cursor CLI", () => {
       });
       const text = chunks.join("");
       expect(text).not.toMatch(/\[Tool:\s/);
+    });
+
+    runE2E("emits tool call label and details for UI (real Cursor CLI format)", { timeout: E2E_TIMEOUT }, async () => {
+      await requireCursorAuth()();
+      const { projectId } = await setupE2EProject();
+      const { chatId } = await createChat(projectId);
+      const res = await fetch(`/api/chats/${chatId}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: "List files in this directory" }),
+      });
+      expect(res.status).toBe(200);
+      const activities: { kind: string; label: string; details?: string }[] = [];
+      await consumeStream(res, (obj) => {
+        if (obj.type === "block" && obj.block?.type === "activity") {
+          activities.push({
+            kind: (obj.block as { kind?: string }).kind ?? "",
+            label: (obj.block as { label?: string }).label ?? "",
+            details: (obj.block as { details?: string }).details,
+          });
+        }
+      });
+      const toolCalls = activities.filter((a) => a.kind === "tool_call");
+      expect(toolCalls.length).toBeGreaterThan(0);
+      const withLabel = toolCalls.find((a) => a.label.startsWith("Tool: ") && a.label !== "Tool: tool_call");
+      expect(withLabel).toBeDefined();
+      expect(withLabel!.label).not.toBe("tool_call");
+      const withDetails = toolCalls.find((a) => a.details && a.details.length > 0);
+      expect(withDetails).toBeDefined();
+    });
+
+    runE2E("persists tool call details to DB (GET messages returns blocks with details)", {
+      timeout: E2E_TIMEOUT,
+    }, async () => {
+      await requireCursorAuth()();
+      const { projectId } = await setupE2EProject();
+      const { chatId } = await createChat(projectId);
+      await sendMessageAndDrain(chatId, "List files in this directory");
+      await waitForPersist();
+      const msgs = await fetch(`/api/chats/${chatId}/messages`).then((r) => r.json());
+      const assistantMsg = msgs.find((m: { role: string }) => m.role === "assistant");
+      expect(assistantMsg).toBeDefined();
+      const blocks = typeof assistantMsg.blocks === "string" ? JSON.parse(assistantMsg.blocks) : assistantMsg.blocks;
+      expect(Array.isArray(blocks)).toBe(true);
+      const toolActivities = blocks.filter((b: { type: string; kind?: string }) => b.type === "activity" && b.kind === "tool_call");
+      expect(toolActivities.length).toBeGreaterThan(0);
+      const withDetails = toolActivities.find((a: { details?: string }) => a.details && a.details.length > 0);
+      expect(withDetails).toBeDefined();
+      expect(withDetails!.label).not.toBe("tool_call");
     });
 
     runE2E("streaming data does not mix between concurrent chats", { timeout: E2E_TIMEOUT * 2 }, async () => {

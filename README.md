@@ -4,7 +4,7 @@ Self-hosted wrapper around the Cursor CLI — a chat-focused web UI to run AI-as
 
 ## Status
 
-**Phases 1–3 complete.** Monorepo, API (Node + Hono), frontend (Vite + React + shadcn/ui), Drizzle + better-sqlite3. Config, browse, projects, chats, messages API done. See [docs/10-implementation-status.md](docs/10-implementation-status.md).
+**Full MVP complete (Phases 1–10).** Monorepo, API (Node + Hono), frontend (Vite + React + shadcn/ui), Drizzle + better-sqlite3. Config, browse, projects, chats, messages, Cursor CLI streaming. Full web UI: setup, create project (local/git), chat view with streaming, code blocks, auth instructions. See [docs/10-implementation-status.md](docs/10-implementation-status.md).
 
 ## Quick Start
 

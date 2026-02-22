@@ -15,11 +15,48 @@ export interface CursorSpawnOptions {
   model?: string;
 }
 
+/** Content item: text, or function/tool_use (OpenAI/Anthropic style). */
+type ContentItem =
+  | { type?: string; text?: string }
+  | { type: "function"; name?: string; arguments?: string }
+  | { type: "tool_use"; name?: string; input?: unknown };
+
+/** Cursor CLI tool_call.tool_call keys → display names (from actual CLI output). */
+const CURSOR_CLI_TOOL_KEYS: Record<string, string> = {
+  shellToolCall: "run_terminal_cmd",
+  readToolCall: "read_file",
+  editToolCall: "edit",
+  searchReplaceToolCall: "search_replace",
+  writeToolCall: "write",
+  listDirToolCall: "list_dir",
+  grepToolCall: "grep",
+  globFileSearchToolCall: "glob_file_search",
+  deleteFileToolCall: "delete_file",
+  applyPatchToolCall: "apply_patch",
+  webSearchToolCall: "web_search",
+  fetchUrlToolCall: "fetch_url",
+};
+
+/** Derive display name from unknown tool key (e.g. "fooBarToolCall" → "foo_bar"). */
+function toolKeyToDisplayName(key: string): string {
+  const known = CURSOR_CLI_TOOL_KEYS[key];
+  if (known) return known;
+  if (key.endsWith("ToolCall")) {
+    const base = key.slice(0, -8);
+    return base.replace(/([A-Z])/g, "_$1").toLowerCase().replace(/^_/, "") || key;
+  }
+  return key;
+}
+
 export interface CursorLine {
   type: string;
   result?: string;
   session_id?: string;
-  message?: { content?: Array<{ type?: string; text?: string }> };
+  message?: { content?: ContentItem[] };
+  /** Cursor CLI: tool_call.tool_call = { shellToolCall: {...}, readToolCall: {...}, ... } */
+  tool_call?: Record<string, { args?: Record<string, unknown> }>;
+  tool_name?: string;
+  name?: string;
   error?: string;
 }
 
@@ -182,18 +219,178 @@ export function isActivityContent(line: CursorLine): boolean {
   return !!(line.type && ACTIVITY_TYPES.has(line.type));
 }
 
+/** Parsed tool call: name + key=value args. */
+export interface ParsedToolCall {
+  toolName: string;
+  args: Record<string, string>;
+}
+
 /**
- * Extract a short label for activity display (e.g. "Tool: read_file").
+ * Parse tool call text like "[Tool: read_file path=/tmp/foo]" into tool name and args.
+ * Handles key=value and key="quoted value" patterns.
  */
-export function extractActivityLabel(line: CursorLine): string {
-  if (line.type === "thinking") return "Thinking…";
+export function parseToolCall(text: string): ParsedToolCall | null {
+  const m = text.match(/\[Tool:\s*(\S+)(?:\s+(.+))?\]/);
+  if (!m) return null;
+  const toolName = m[1];
+  const args: Record<string, string> = {};
+  const rest = m[2]?.trim();
+  if (rest) {
+    // Match key=value or key="value" (value may contain spaces)
+    const argRe = /(\w+)=(?:"([^"]*)"|([^\s]+))/g;
+    let match: RegExpExecArray | null;
+    while ((match = argRe.exec(rest)) !== null) {
+      args[match[1]] = match[2] ?? match[3] ?? "";
+    }
+  }
+  return { toolName, args };
+}
+
+/**
+ * Build a short detail string for a tool call (e.g. "path: src/foo.ts").
+ * Truncates long values for display. Shows path, command, pattern for any tool.
+ */
+function formatToolDetails(toolName: string, args: Record<string, string>): string | undefined {
+  const maxLen = 80;
+  const parts: string[] = [];
+
+  if (args.path) parts.push(`path: ${args.path}`);
+  if (args.file_path) parts.push(`path: ${args.file_path}`);
+  if (args.command) parts.push(`cmd: ${args.command}`);
+  if (args.pattern) parts.push(`pattern: ${args.pattern}`);
+  if (args.old_string)
+    parts.push(`old: ${args.old_string.slice(0, 30)}${args.old_string.length > 30 ? "…" : ""}`);
+  if (args.diff) parts.push(`diff: ${args.diff.slice(0, 40)}${args.diff.length > 40 ? "…" : ""}`);
+
+  if (parts.length === 0) return undefined;
+  const s = parts.join(" · ");
+  return s.length > maxLen ? s.slice(0, maxLen) + "…" : s;
+}
+
+/**
+ * Extract from Cursor CLI format: tool_call = { shellToolCall: { args }, readToolCall: { args }, ... }
+ * Verified against: cursor agent --print --output-format stream-json
+ */
+function extractCursorCliToolCall(line: CursorLine): ParsedToolCall | null {
+  const tc = line.tool_call;
+  if (!tc || typeof tc !== "object") return null;
+  for (const [key, val] of Object.entries(tc)) {
+    if (val && typeof val === "object" && "args" in val) {
+      const displayName = toolKeyToDisplayName(key);
+      const argsObj = (val as { args?: Record<string, unknown> }).args;
+      const args = argsObj && typeof argsObj === "object" ? flattenArgs(argsObj) : {};
+      return { toolName: displayName, args };
+    }
+  }
+  return null;
+}
+
+function flattenArgs(obj: Record<string, unknown>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (typeof v === "string") out[k] = v;
+    else if (typeof v === "number") out[k] = String(v);
+  }
+  return out;
+}
+
+/**
+ * Extract tool name and args from structured content (OpenAI function / Anthropic tool_use).
+ */
+function extractStructuredToolCall(line: CursorLine): ParsedToolCall | null {
+  const top = line as { tool_name?: string; name?: string; arguments?: string; input?: unknown };
+  if (top.tool_name) {
+    const args = parseJsonArgs(top.arguments);
+    return { toolName: top.tool_name, args: args ?? {} };
+  }
+  if (top.name && (line.type === "tool_call" || line.type === "tool_result")) {
+    const args = parseJsonArgs(top.arguments);
+    return { toolName: top.name, args: args ?? {} };
+  }
+  const content = line.message?.content;
+  if (!Array.isArray(content)) return null;
+  for (const item of content) {
+    const i = item as ContentItem & { type?: string; name?: string; arguments?: string; input?: unknown };
+    if (i.type === "function" && i.name) {
+      const args = parseJsonArgs(i.arguments);
+      return { toolName: i.name, args: args ?? {} };
+    }
+    if (i.type === "tool_use" && i.name) {
+      const args = parseJsonArgs(i.input);
+      return { toolName: i.name, args: args ?? {} };
+    }
+  }
+  return null;
+}
+
+function parseJsonArgs(val: unknown): Record<string, string> | null {
+  if (val == null) return null;
+  if (typeof val === "object" && !Array.isArray(val) && val !== null) {
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(val)) {
+      if (typeof v === "string") out[k] = v;
+      else if (v != null) out[k] = String(v);
+    }
+    return out;
+  }
+  if (typeof val === "string") {
+    try {
+      const parsed = JSON.parse(val) as Record<string, unknown>;
+      if (parsed && typeof parsed === "object") {
+        const out: Record<string, string> = {};
+        for (const [k, v] of Object.entries(parsed)) {
+          if (typeof v === "string") out[k] = v;
+          else if (v != null) out[k] = String(v);
+        }
+        return out;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  return null;
+}
+
+/**
+ * Extract activity info: label (always includes tool name) and optional details.
+ * Supports: Cursor CLI tool_call.*, [Tool: name args...] text, OpenAI function/tool_use.
+ */
+export function extractActivityInfo(line: CursorLine): { label: string; details?: string } {
+  if (line.type === "thinking") return { label: "Thinking…" };
+  // 1. Cursor CLI format: tool_call = { shellToolCall: { args }, readToolCall: { args }, ... }
+  const cliParsed = extractCursorCliToolCall(line);
+  if (cliParsed) {
+    const label = `Tool: ${cliParsed.toolName}`;
+    const details = formatToolDetails(cliParsed.toolName, cliParsed.args);
+    return { label, details };
+  }
+  // 2. OpenAI/Anthropic structured (function/tool_use)
+  const structured = extractStructuredToolCall(line);
+  if (structured) {
+    const label = `Tool: ${structured.toolName}`;
+    const details = formatToolDetails(structured.toolName, structured.args);
+    return { label, details };
+  }
+  // 3. [Tool: name args...] text format (mock)
   const text = extractTextFromLine(line);
   if (text) {
-    const m = text.match(/\[Tool:\s*(\S+)/);
-    if (m) return `Tool: ${m[1]}`;
-    return text.slice(0, 60) + (text.length > 60 ? "…" : "");
+    const parsed = parseToolCall(text);
+    if (parsed) {
+      const label = `Tool: ${parsed.toolName}`;
+      const details = formatToolDetails(parsed.toolName, parsed.args);
+      return { label, details };
+    }
+    return { label: text.slice(0, 60) + (text.length > 60 ? "…" : "") };
   }
-  return line.type ?? "Activity";
+  return { label: line.type ?? "Activity" };
+}
+
+/**
+ * Extract a short label for activity display (e.g. "Tool: read_file").
+ * @deprecated Prefer extractActivityInfo for label + details.
+ */
+export function extractActivityLabel(line: CursorLine): string {
+  return extractActivityInfo(line).label;
 }
 
 /**

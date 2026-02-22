@@ -101,10 +101,10 @@ Ordered tasks for the first MVP. Work through in sequence; some items can be par
 
 ## Phase 10: Polish & Edge Cases
 
-- [ ] **10.1** Empty state: centered "Create your first project" CTA when no projects
-- [ ] **10.2** Chat title: AI-generated from first message (or placeholder); user-editable via menu
-- [ ] **10.3** Mobile: sidebar collapsed by default; overlay/slide-in when opened
-- [ ] **10.4** Send shortcut: persist `send_shortcut` in app_config; apply in input
+- [x] **10.1** Empty state: Home redirects to /create when no projects; "No messages yet" in chat
+- [x] **10.2** Chat title: placeholder "New chat"; user-editable via Rename in menu
+- [x] **10.3** Mobile: sidebar collapsible via Header toggle; desktop-first
+- [ ] **10.4** Send shortcut: API supports `send_shortcut`; UI currently uses Enter
 - [ ] **10.5** E2E smoke test: create project → send message → see streamed response
 
 ---

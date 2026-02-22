@@ -56,12 +56,14 @@ function main() {
       })
     );
 
-    // 4. Tool call (activity — emitted for UI, not streamed as content)
+    // 4. Tool call — real Cursor CLI format (tool_call.readToolCall)
     process.stdout.write(
       ndjson({
         type: "tool_call",
-        message: {
-          content: [{ type: "text", text: "[Tool: read_file path=/tmp/foo.ts]" }],
+        subtype: "started",
+        call_id: "mock-read-1",
+        tool_call: {
+          readToolCall: { args: { path: "/tmp/foo.ts", limit: 10 } },
         },
         session_id: sessionId,
       })
@@ -77,12 +79,14 @@ function main() {
       })
     );
 
-    // 6. Another tool call (interleaved)
+    // 6. Another tool call — real Cursor CLI format (tool_call.searchReplaceToolCall)
     process.stdout.write(
       ndjson({
         type: "tool_call",
-        message: {
-          content: [{ type: "text", text: "[Tool: search path=/tmp]" }],
+        subtype: "started",
+        call_id: "mock-search-1",
+        tool_call: {
+          searchReplaceToolCall: { args: { path: "src/index.ts", old_string: "foo", new_string: "bar" } },
         },
         session_id: sessionId,
       })

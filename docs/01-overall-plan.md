@@ -14,15 +14,15 @@ Build a self-hosted wrapper around the Cursor CLI that replicates the experience
 
 ## Phases
 
-### Phase 1: MVP (Current Focus)
+### Phase 1: MVP (Complete)
 
-- [ ] Web UI with chat interface
-- [ ] Create new chat / open existing chat
-- [ ] Workspace setup: local directory or git checkout
-- [ ] Cursor CLI session management (launch, resume, track by session ID)
-- [ ] SQLite + ORM with migrations
-- [ ] Streaming chat output
-- [ ] Monorepo structure (if multiple packages needed)
+- [x] Web UI with chat interface
+- [x] Create new chat / open existing chat
+- [x] Workspace setup: local directory or git checkout
+- [x] Cursor CLI session management (launch, resume, track by session ID)
+- [x] SQLite + ORM with migrations
+- [x] Streaming chat output
+- [x] Monorepo structure (apps/web, apps/api, packages/db)
 
 ### Phase 2: Post-MVP
 
