@@ -19,6 +19,8 @@ Testing policy and coverage for cursor-selfhost.
 pnpm test           # All packages (--if-present)
 pnpm test:api       # API only (uses mock Cursor CLI)
 pnpm test:e2e       # API with real Cursor CLI (requires cursor agent login)
+pnpm --filter api test:cli       # CLI input format discovery (plain text, JSON, images)
+pnpm --filter api test:cli:vitest # Same, via Vitest (RUN_CLI_FORMAT_TESTS=1)
 pnpm --filter db test   # DB package only
 ```
 
@@ -35,6 +37,8 @@ pnpm --filter db test   # DB package only
 | `apps/api` | `app.test.ts` | Health, config GET/PUT, browse, projects CRUD, chats CRUD (incl. session isolation), messages, POST messages validation, cursor status |
 | `apps/api` | `src/cursor-cli.test.ts` | `parseCursorLine`, `extractTextFromLine`, `isAssistantContent`, `createCursorSession`, `spawnCursorAgent` (mocked spawn) |
 | `apps/api` | `integration.test.ts` | Message streaming (CLI output parsing), chat isolation (sessions, no cross-chat mixing), uses mock CLI |
+| `apps/api` | `cli-input-formats.test.ts` | What input formats the Cursor CLI accepts (plain text, JSON with image_url, etc.); run with `RUN_CLI_FORMAT_TESTS=1` |
+| `apps/api` | `scripts/test-cli-input-formats.js` | Standalone script for CLI format discovery; run via `pnpm test:cli` |
 | `packages/db` | `client.test.ts` | Migrations, ensureAppConfigDefaults |
 
 ---
@@ -85,3 +89,4 @@ pnpm --filter db test   # DB package only
 | 2025-02 | Initial testing policy; API and DB tests added |
 | 2025-02 | Cursor CLI unit tests (`cursor-cli.test.ts`); session isolation integration tests; mock `createCursorSession` in app tests |
 | 2025-02 | Coverage table: clarified Frontend/E2E status; full MVP UI shipped |
+| 2025-02 | CLI input format tests: plain text, JSON (OpenAI content blocks with image_url), JSON text-only, file path refs; verified Cursor CLI accepts images via JSON |

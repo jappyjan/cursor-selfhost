@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useLayoutEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useHeader } from "@/contexts/HeaderContext";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -7,6 +7,7 @@ import {
   fetchMessages,
   fetchProjectBySlug,
   sendMessageStreaming,
+  uploadImages,
   updateChat,
   deleteChat,
   fetchCursorStatus,
@@ -60,6 +61,7 @@ export function ChatView() {
   const [renameTitle, setRenameTitle] = useState("");
   const [deleteOpen, setDeleteOpen] = useState(false);
   const lastSentRef = useRef<string>("");
+  const lastSentImageUrlsRef = useRef<string[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesScrollRef = useRef<HTMLDivElement>(null);
   const userAtBottomRef = useRef(true);
@@ -86,7 +88,8 @@ export function ChatView() {
   const scrollToBottom = useCallback(() => {
     userAtBottomRef.current = true;
     setShowScrollToBottom(false);
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    const el = messagesScrollRef.current;
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   }, []);
 
   const { data: chat, error } = useQuery({
@@ -110,9 +113,22 @@ export function ChatView() {
   });
 
   const sendMutation = useMutation({
-    mutationFn: async ({ content, targetChatId }: { content: string; targetChatId: string }) => {
+    mutationFn: async ({
+      content,
+      files,
+      targetChatId,
+    }: {
+      content: string;
+      files?: File[];
+      targetChatId: string;
+    }) => {
       setSendError(null);
       setStreamingBlocks([]);
+      let imagePaths: string[] | undefined;
+      if (files?.length) {
+        const { paths } = await uploadImages(targetChatId, files);
+        imagePaths = paths;
+      }
       await sendMessageStreaming(targetChatId, content, (chunk) => {
         if (chunk.type === "block") {
           setStreamingBlocks((prev) => {
@@ -150,9 +166,10 @@ export function ChatView() {
           ]);
         }
         if (chunk.type === "error") setSendError(chunk.error);
-      });
+      }, imagePaths);
     },
     onSuccess: async (_data, { targetChatId }) => {
+      lastSentImageUrlsRef.current = [];
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["messages", targetChatId] }),
         queryClient.invalidateQueries({ queryKey: ["chat", targetChatId] }),
@@ -162,6 +179,7 @@ export function ChatView() {
       if (sendingToChatIdRef.current === targetChatId) sendingToChatIdRef.current = null;
     },
     onError: (err, { targetChatId }) => {
+      lastSentImageUrlsRef.current = [];
       setSendError((err as Error).message);
       setStreamingBlocks([]);
       if (sendingToChatIdRef.current === targetChatId) sendingToChatIdRef.current = null;
@@ -172,14 +190,15 @@ export function ChatView() {
   const isCursorLoggedIn = cursorStatus?.ok === true;
 
   const handleSend = useCallback(
-    (content: string) => {
+    (content: string, files?: File[], imagePreviewUrls?: string[]) => {
       const text = content.trim();
-      if (!text || isStreaming || !chatId) return;
-      lastSentRef.current = text;
+      if ((!text && (!files || files.length === 0)) || isStreaming || !chatId) return;
+      lastSentRef.current = text || (files?.length ? `[${files.length} image(s)]` : "");
+      lastSentImageUrlsRef.current = imagePreviewUrls ?? [];
       userAtBottomRef.current = true;
       setShowScrollToBottom(false);
       sendingToChatIdRef.current = chatId;
-      sendMutation.mutate({ content: text, targetChatId: chatId });
+      sendMutation.mutate({ content: text, files, targetChatId: chatId });
     },
     [isStreaming, sendMutation, chatId]
   );
@@ -211,7 +230,7 @@ export function ChatView() {
   }, [chatId, slug, navigate, queryClient]);
 
   type DisplayItem =
-    | { type: "user"; messageId: string; content: string }
+    | { type: "user"; messageId: string; content: string; imageUrls?: string[] }
     | { type: "assistant"; messageId: string; block: MessageBlock; isPulsing?: boolean }
     | { type: "assistant_legacy"; messageId: string; content: string; activities: { kind: string; label: string }[] | null };
 
@@ -278,7 +297,12 @@ export function ChatView() {
   const displayItems: DisplayItem[] = [];
   for (const m of messages) {
     if (m.role === "user") {
-      displayItems.push({ type: "user", messageId: m.id, content: m.content });
+      displayItems.push({
+        type: "user",
+        messageId: m.id,
+        content: m.content,
+        imageUrls: m.imageUrls,
+      });
       continue;
     }
     const blocks = parseBlocks(m);
@@ -300,7 +324,12 @@ export function ChatView() {
     const lastSent = lastSentRef.current;
     const alreadyHasUserMessage = messages.some((m) => m.role === "user" && m.content === lastSent);
     if (!alreadyHasUserMessage) {
-      displayItems.push({ type: "user", messageId: "__pending_user__", content: lastSent });
+      displayItems.push({
+        type: "user",
+        messageId: "__pending_user__",
+        content: lastSent,
+        imageUrls: lastSentImageUrlsRef.current,
+      });
     }
   }
 
@@ -321,13 +350,15 @@ export function ChatView() {
   const collapsedItems = collapseThinkingItems(displayItems);
 
   const lastScrollTimeRef = useRef(0);
-  const SCROLL_THROTTLE_MS = 250;
-  useEffect(() => {
+  const SCROLL_THROTTLE_MS = 100;
+  useLayoutEffect(() => {
     if (!userAtBottomRef.current) return;
+    const el = messagesScrollRef.current;
+    if (!el) return;
     const now = Date.now();
     if (now - lastScrollTimeRef.current < SCROLL_THROTTLE_MS && isStreaming) return;
     lastScrollTimeRef.current = now;
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    el.scrollTop = el.scrollHeight;
   }, [messages.length, streamingBlocks.length, streamingBlocks, isStreaming]);
 
   useEffect(() => {
@@ -404,6 +435,7 @@ export function ChatView() {
             <>
               {collapsedItems.map((item, idx) => {
                 if (item.type === "user") {
+                  const imageUrls = item.imageUrls;
                   return (
                     <div
                       key={`${item.messageId}-${idx}`}
@@ -413,8 +445,23 @@ export function ChatView() {
                         <User className="h-4 w-4 shrink-0 text-muted-foreground" />
                         <p className="text-sm font-medium text-muted-foreground">You</p>
                       </div>
-                      <div className="mt-2">
-                        <MessageContent content={item.content} />
+                      <div className="mt-2 space-y-2">
+                        {imageUrls && imageUrls.length > 0 && (
+                          <div className="flex flex-wrap gap-2">
+                            {imageUrls.map((url, i) => (
+                              <img
+                                key={i}
+                                src={url}
+                                alt=""
+                                className="max-h-48 max-w-full rounded-md border border-border object-contain"
+                              />
+                            ))}
+                          </div>
+                        )}
+                        {item.content &&
+                          !(imageUrls?.length && /^\[\d+ image\(s\)( attached)?\]$/.test(item.content)) && (
+                          <MessageContent content={item.content} />
+                        )}
                       </div>
                     </div>
                   );
@@ -504,12 +551,11 @@ export function ChatView() {
         {showScrollToBottom && (
           <Button
             variant="secondary"
-            size="sm"
-            className="absolute bottom-6 left-1/2 -translate-x-1/2 shadow-lg"
+            size="icon"
+            className="absolute bottom-6 right-6 h-10 w-10 rounded-full shadow-lg"
             onClick={scrollToBottom}
           >
-            <ChevronDown className="mr-1.5 h-4 w-4" />
-            Scroll to bottom
+            <ChevronDown className="h-5 w-5" />
           </Button>
         )}
       </div>
@@ -527,7 +573,7 @@ export function ChatView() {
                 const toRetry = lastSentRef.current;
                 if (toRetry && chatId) {
                   lastSentRef.current = toRetry;
-                  sendMutation.mutate({ content: toRetry, targetChatId: chatId });
+                  sendMutation.mutate({ content: toRetry, files: undefined, targetChatId: chatId });
                 }
               }}
             >

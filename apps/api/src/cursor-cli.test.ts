@@ -20,6 +20,7 @@ import {
   parseToolCall,
   createCursorSession,
   spawnCursorAgent,
+  buildAgentStdin,
 } from "./cursor-cli";
 
 describe("parseCursorLine", () => {
@@ -401,6 +402,26 @@ describe("createCursorSession", () => {
     });
 
     await expect(createCursorSession("/tmp")).rejects.toThrow();
+  });
+});
+
+describe("buildAgentStdin", () => {
+  it("returns plain text when no image paths", () => {
+    expect(buildAgentStdin("hello")).toBe("hello");
+    expect(buildAgentStdin("hello", [])).toBe("hello");
+  });
+
+  it("appends path note when image paths present", () => {
+    const result = buildAgentStdin("describe this", ["/workspace/.cursor-attachments/abc/image-0.png"]);
+    expect(result).toContain("describe this");
+    expect(result).toContain("Attached images are available at:");
+    expect(result).toContain("/workspace/.cursor-attachments/abc/image-0.png");
+    expect(result).toContain("read_file tool");
+  });
+
+  it("returns path note only when content empty but image paths present", () => {
+    const result = buildAgentStdin("", ["/tmp/img.png"]);
+    expect(result).toContain("Attached images are available at: /tmp/img.png");
   });
 });
 

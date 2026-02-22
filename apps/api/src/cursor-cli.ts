@@ -78,7 +78,21 @@ export interface CursorLine {
 }
 
 /**
+ * Build stdin payload for Cursor CLI. Plain text only.
+ * When imagePaths are present, appends a note to the prompt telling the agent where to find uploaded images.
+ */
+export function buildAgentStdin(content: string, imagePaths?: string[]): string {
+  const text = content.trim();
+  if (!imagePaths || imagePaths.length === 0) {
+    return text;
+  }
+  const pathNote = `\n\n[Attached images are available at: ${imagePaths.join(", ")}. You can read them with the read_file tool.]`;
+  return text ? text + pathNote : pathNote.trim();
+}
+
+/**
  * Spawn Cursor CLI agent process. Writes message to stdin, reads NDJSON from stdout.
+ * message: plain text string, or use buildAgentStdin(content, imagePaths) when images are uploaded.
  */
 export function spawnCursorAgent(
   message: string,

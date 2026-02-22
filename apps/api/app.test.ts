@@ -281,7 +281,7 @@ describe("API", () => {
       expect(Array.isArray(json)).toBe(true);
     });
 
-    it("POST /api/chats/:id/messages returns 400 when content missing", async () => {
+    it("POST /api/chats/:id/messages returns 400 when content and imagePaths missing", async () => {
       const projectsRes = await fetch("/api/projects");
       const projects = await projectsRes.json();
       const projectId = projects[0]?.id;
@@ -295,7 +295,7 @@ describe("API", () => {
       });
       expect(res.status).toBe(400);
       const json = await res.json();
-      expect(json.error).toContain("content");
+      expect(json.error).toMatch(/content|imagePaths/);
     });
 
     it("POST /api/chats/:id/messages returns 404 for unknown chat", async () => {

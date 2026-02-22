@@ -39,6 +39,8 @@ export const messages = sqliteTable("messages", {
   activities: text("activities"),
   /** JSON array of ordered blocks: { type: "text", content } | { type: "activity", kind, label } */
   blocks: text("blocks"),
+  /** JSON array of "uploadId/filename" for user message image attachments */
+  imagePaths: text("image_paths"),
 });
 
 export const appConfig = sqliteTable("app_config", {

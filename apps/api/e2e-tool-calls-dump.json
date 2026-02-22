@@ -1,0 +1,46 @@
+[
+  {
+    "kind": "thinking",
+    "label": "Thinking…"
+  },
+  {
+    "kind": "thinking",
+    "label": "Thinking…"
+  },
+  {
+    "kind": "tool_call",
+    "label": "Edit",
+    "toolName": "edit",
+    "args": {
+      "path": "/tmp/e2e-0UnhRN/E2E_DIFF_TEST.txt",
+      "streamContent": "before"
+    },
+    "details": "path: /tmp/e2e-0UnhRN/E2E_DIFF_TEST.txt"
+  },
+  {
+    "kind": "thinking",
+    "label": "Thinking…"
+  },
+  {
+    "kind": "thinking",
+    "label": "Thinking…"
+  },
+  {
+    "kind": "tool_call",
+    "label": "Edit",
+    "toolName": "edit",
+    "args": {
+      "path": "/tmp/e2e-0UnhRN/E2E_DIFF_TEST.txt",
+      "streamContent": "after"
+    },
+    "details": "path: /tmp/e2e-0UnhRN/E2E_DIFF_TEST.txt"
+  },
+  {
+    "kind": "thinking",
+    "label": "Thinking…"
+  },
+  {
+    "kind": "thinking",
+    "label": "Thinking…"
+  }
+]

@@ -17,12 +17,29 @@ const queryClient = new QueryClient({
 
 function FirstRunGuard({ children }: { children: React.ReactNode }) {
   const location = useLocation();
-  const { data: config, isLoading } = useQuery({ queryKey: ["config"], queryFn: fetchConfig });
+  const { data: config, isLoading, isError, error } = useQuery({
+    queryKey: ["config"],
+    queryFn: fetchConfig,
+    retry: 2,
+    retryDelay: 1000,
+  });
 
   if (isLoading) {
     return (
       <div className="flex h-screen items-center justify-center bg-background">
         <p className="text-muted-foreground">Loading…</p>
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="flex h-screen flex-col items-center justify-center gap-4 bg-background p-8">
+        <p className="text-center font-medium text-destructive">Backend not available</p>
+        <p className="max-w-md text-center text-sm text-muted-foreground">
+          {error instanceof Error ? error.message : "Failed to connect to the API."} Make sure the API is running
+          (e.g. <code className="rounded bg-muted px-1 font-mono">pnpm dev:api</code>).
+        </p>
       </div>
     );
   }

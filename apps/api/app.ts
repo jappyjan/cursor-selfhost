@@ -6,7 +6,7 @@ import { homedir } from "os";
 import { db } from "@cursor-selfhost/db";
 import * as schema from "@cursor-selfhost/db/schema";
 import { nanoid } from "nanoid";
-import { mkdir, writeFile } from "fs/promises";
+import { mkdir, writeFile, readFile } from "fs/promises";
 import {
   spawnCursorAgent,
   buildAgentStdin,
@@ -402,11 +402,56 @@ app.post("/api/chats/:id/uploads", async (c) => {
   return c.json({ paths });
 });
 
+// Serve attachment images (path = uploadId/filename)
+const IMAGE_EXT_TO_MIME: Record<string, string> = {
+  png: "image/png",
+  jpeg: "image/jpeg",
+  jpg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+};
+app.get("/api/chats/:id/attachments/:uploadId/:filename", async (c) => {
+  const chatId = c.req.param("id");
+  const uploadId = c.req.param("uploadId");
+  const filename = c.req.param("filename");
+  if (!uploadId || !filename || uploadId.includes("..") || filename.includes("..")) {
+    return c.json({ error: "Invalid path" }, 400);
+  }
+  const filePath = path.join(ATTACHMENTS_BASE_PATH, chatId, uploadId, filename);
+  const ext = filename.split(".").pop()?.toLowerCase();
+  const mime = (ext && IMAGE_EXT_TO_MIME[ext]) || "application/octet-stream";
+  try {
+    const buf = await readFile(filePath);
+    return c.body(buf, 200, { "Content-Type": mime });
+  } catch {
+    return c.json({ error: "Not found" }, 404);
+  }
+});
+
 // Messages
 app.get("/api/chats/:id/messages", async (c) => {
   const id = c.req.param("id");
   const list = await db.select().from(schema.messages).where(eq(schema.messages.chatId, id)).orderBy(schema.messages.createdAt);
-  return c.json(list);
+  // Add imageUrls for user messages with imagePaths (stored as "uploadId/filename")
+  const mapped = list.map((m) => {
+    const row = { ...m };
+    const raw = (m as { imagePaths?: string | null }).imagePaths;
+    if (raw && m.role === "user") {
+      try {
+        const paths = JSON.parse(raw) as string[];
+        if (Array.isArray(paths) && paths.length > 0) {
+          (row as Record<string, unknown>).imageUrls = paths.map((p) => {
+            const [uploadId, filename] = p.split("/");
+            return `/api/chats/${id}/attachments/${uploadId}/${filename}`;
+          });
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    return row;
+  });
+  return c.json(mapped);
 });
 
 // Cursor auth check
@@ -439,7 +484,18 @@ app.post("/api/chats/:id/messages", async (c) => {
   if (projectRows.length === 0) return c.json({ error: "Project not found" }, 404);
   const project = projectRows[0];
 
-  // Persist user message (text only; image paths not stored)
+  // Convert full image paths to relative (uploadId/filename) for storage and display
+  const chatAttachmentsBase = path.join(ATTACHMENTS_BASE_PATH, chatId);
+  const storedImagePaths: string[] = [];
+  if (imagePaths?.length) {
+    for (const p of imagePaths) {
+      const rel = path.relative(chatAttachmentsBase, p);
+      if (rel && !rel.startsWith("..") && !path.isAbsolute(rel)) {
+        storedImagePaths.push(rel);
+      }
+    }
+  }
+
   const userMsgId = nanoid();
   const now = new Date();
   const displayContent = content || (imagePaths?.length ? `[${imagePaths.length} image(s) attached]` : "");
@@ -449,6 +505,7 @@ app.post("/api/chats/:id/messages", async (c) => {
     role: "user",
     content: displayContent,
     createdAt: now,
+    imagePaths: storedImagePaths.length ? JSON.stringify(storedImagePaths) : null,
   });
 
   const stdinPayload = buildAgentStdin(content, imagePaths);

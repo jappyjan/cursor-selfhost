@@ -40,6 +40,8 @@ export type Message = {
   activities?: { kind: string; label: string }[] | string | null;
   /** Parsed from JSON; ordered blocks for interleaved text + activities */
   blocks?: MessageBlock[] | string | null;
+  /** Image URLs for user messages (served from attachments) */
+  imageUrls?: string[];
 };
 
 export type CursorStatus = { ok: boolean; error?: string };
@@ -186,10 +188,25 @@ export type StreamChunk =
   | { type: "done"; sessionId: string | null }
   | { type: "error"; error: string };
 
+export async function uploadImages(chatId: string, files: File[]): Promise<{ paths: string[] }> {
+  const formData = new FormData();
+  for (const f of files) formData.append("files", f);
+  const res = await fetch(`${API_BASE}/chats/${chatId}/uploads`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { error?: string }).error ?? "Failed to upload images");
+  }
+  return res.json();
+}
+
 export async function sendMessageStreaming(
   chatId: string,
   content: string,
-  onChunk: (chunk: StreamChunk) => void
+  onChunk: (chunk: StreamChunk) => void,
+  imagePaths?: string[]
 ): Promise<void> {
   type ParsedChunk = {
     type: string;
@@ -207,7 +224,7 @@ export async function sendMessageStreaming(
   const res = await fetch(`${API_BASE}/chats/${chatId}/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content }),
+    body: JSON.stringify({ content, ...(imagePaths?.length && { imagePaths }) }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));

@@ -28,8 +28,30 @@ kill_by_port 3001
 kill_by_port 5173
 sleep 1
 
+# Use absolute path so migrate and API always use the same database
+DB_PATH="$ROOT/packages/db/data/cursor-selfhost.sqlite"
+mkdir -p "$(dirname "$DB_PATH")"
+
 echo "Running migrations..."
-DATABASE_PATH="$ROOT/packages/db/data/cursor-selfhost.sqlite" pnpm --filter db migrate
+DATABASE_PATH="$DB_PATH" pnpm --filter db migrate
+
+# Fallback: ensure image_paths exists (migration 0003) — drizzle-kit may skip it in some setups
+(cd "$ROOT/packages/db" && DB_PATH="$DB_PATH" pnpm exec node -e '
+  const Database = require("better-sqlite3");
+  const path = process.env.DB_PATH;
+  if (!path) process.exit(0);
+  const db = new Database(path);
+  const cols = db.prepare("PRAGMA table_info(messages)").all().map((r) => r.name);
+  if (!cols.includes("image_paths")) {
+    try {
+      db.exec("ALTER TABLE messages ADD COLUMN image_paths text");
+      console.log("Applied fallback migration (image_paths)");
+    } catch (e) {
+      if (!e.message.includes("duplicate")) throw e;
+    }
+  }
+  db.close();
+') 2>/dev/null || true
 
 mkdir -p "$ROOT/logs"
 
@@ -37,7 +59,7 @@ echo "Building web..."
 pnpm --filter web build
 
 echo "Starting API..."
-nohup pnpm --filter api start >>"$ROOT/logs/api.log" 2>&1 &
+DATABASE_PATH="$DB_PATH" nohup pnpm --filter api start >>"$ROOT/logs/api.log" 2>&1 &
 API_PID=$!
 
 echo "Starting web preview..."

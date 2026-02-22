@@ -8,6 +8,9 @@
     "start": "pnpm exec tsx main.ts",
     "test": "vitest run",
     "dump:cli": "node scripts/dump-cursor-cli-output.js",
+    "test:cli": "CURSOR_CLI_PATH=agent node scripts/test-cli-input-formats.js",
+    "test:cli:auth": "CURSOR_CLI_PATH=agent node scripts/test-cli-input-formats.js --auth-check-only",
+    "test:cli:vitest": "RUN_CLI_FORMAT_TESTS=1 CURSOR_CLI_PATH=agent vitest run cli-input-formats",
     "test:e2e": "RUN_E2E_WITH_REAL_CURSOR=1 vitest run",
     "test:e2e:dump": "RUN_E2E_WITH_REAL_CURSOR=1 DUMP_E2E_TOOL_CALLS=1 vitest run integration.test"
   },
