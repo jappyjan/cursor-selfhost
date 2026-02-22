@@ -46,6 +46,26 @@ export type Message = {
 
 export type CursorStatus = { ok: boolean; error?: string };
 
+/** Stdio config: { command, args?, env? } */
+export type McpStdioConfig = {
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+};
+
+/** HTTP/Streamable config: { url, headers? } */
+export type McpUrlConfig = {
+  url: string;
+  headers?: Record<string, string>;
+};
+
+/** Desktop config: { desktop: { command } } */
+export type McpDesktopConfig = {
+  desktop: { command: string };
+};
+
+export type McpServerConfig = McpStdioConfig | McpUrlConfig | McpDesktopConfig;
+
 export type McpServer = {
   id: string;
   projectId: string;
@@ -53,6 +73,7 @@ export type McpServer = {
   command: string;
   args: string;
   env: string | null;
+  config: string | null;
   enabled: boolean;
   sortOrder: number;
   createdAt: string;
@@ -107,9 +128,13 @@ export async function fetchMcpServers(projectId: string): Promise<McpServer[]> {
   return res.json();
 }
 
+export type CreateMcpServerBody =
+  | { name: string; config: McpServerConfig; enabled?: boolean }
+  | { name: string; command: string; args?: string[]; env?: Record<string, string>; enabled?: boolean };
+
 export async function createMcpServer(
   projectId: string,
-  body: { name: string; command: string; args: string[]; env?: Record<string, string>; enabled?: boolean }
+  body: CreateMcpServerBody
 ): Promise<McpServer> {
   const res = await fetch(`${API_BASE}/projects/${projectId}/mcp-servers`, {
     method: "POST",
@@ -123,10 +148,19 @@ export async function createMcpServer(
   return res.json();
 }
 
+export type UpdateMcpServerBody = {
+  name?: string;
+  config?: McpServerConfig;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  enabled?: boolean;
+};
+
 export async function updateMcpServer(
   projectId: string,
   serverId: string,
-  body: { name?: string; command?: string; args?: string[]; env?: Record<string, string>; enabled?: boolean }
+  body: UpdateMcpServerBody
 ): Promise<McpServer> {
   const res = await fetch(`${API_BASE}/projects/${projectId}/mcp-servers/${serverId}`, {
     method: "PATCH",

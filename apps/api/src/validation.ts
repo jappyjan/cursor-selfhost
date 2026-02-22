@@ -34,11 +34,55 @@ export function isValidGitUrl(url: string): boolean {
   return GIT_URL_REGEX.test(trimmed);
 }
 
-/** MCP server config for create/update */
-export const mcpServerSchema = z.object({
-  name: z.string().min(1).max(100),
+/** Stdio MCP config: { command, args?, env? } */
+export const mcpStdioConfigSchema = z.object({
   command: z.string().min(1).max(500),
-  args: z.array(z.string()).max(50),
+  args: z.array(z.string()).max(50).optional(),
   env: z.record(z.string(), z.string()).optional(),
-  enabled: z.boolean().optional(),
 });
+
+/** HTTP/Streamable MCP config: { url, headers? } */
+export const mcpUrlConfigSchema = z.object({
+  url: z
+    .string()
+    .min(1)
+    .max(2000)
+    .refine((s) => s.startsWith("http://") || s.startsWith("https://"), {
+      message: "URL must start with http:// or https://",
+    }),
+  headers: z.record(z.string(), z.string()).optional(),
+});
+
+/** Desktop MCP config: { desktop: { command } } (Cursor Desktop) */
+export const mcpDesktopConfigSchema = z.object({
+  desktop: z.object({
+    command: z.string().min(1).max(500),
+  }),
+});
+
+/** Full MCP server config — stdio, url, or desktop */
+export const mcpServerConfigSchema = z.union([
+  mcpStdioConfigSchema,
+  mcpUrlConfigSchema,
+  mcpDesktopConfigSchema,
+]);
+
+const mcpServerBaseSchema = z.object({
+  name: z.string().min(1).max(100),
+  enabled: z.boolean().optional(),
+  config: mcpServerConfigSchema.optional(),
+  command: z.string().min(1).max(500).optional(),
+  args: z.array(z.string()).max(50).optional(),
+  env: z.record(z.string(), z.string()).optional(),
+});
+
+/** MCP server payload for create. Use config for full format, or command/args/env for legacy stdio. */
+export const mcpServerSchema = mcpServerBaseSchema.refine(
+  (d) =>
+    d.config !== undefined ||
+    (d.command !== undefined && d.command.length > 0),
+  { message: "Provide config (stdio/url/desktop) or command for stdio" }
+);
+
+/** MCP server payload for PATCH (partial update). No refinement. */
+export const mcpServerPatchSchema = mcpServerBaseSchema.partial();

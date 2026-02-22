@@ -321,6 +321,52 @@ describe("API", () => {
       const res = await fetch("/api/projects/unknown-id/mcp-servers");
       expect(res.status).toBe(404);
     });
+
+    it("POST /api/projects/:id/mcp-servers creates HTTP url server", async () => {
+      const res = await fetch(`/api/projects/${projectId}/mcp-servers`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "remote-mcp",
+          config: { url: "https://example.com/mcp" },
+          enabled: true,
+        }),
+      });
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.name).toBe("remote-mcp");
+      expect(json.config).toContain("https://example.com/mcp");
+      expect(json.command).toBe("url");
+    });
+
+    it("POST /api/projects/:id/mcp-servers creates desktop server", async () => {
+      const res = await fetch(`/api/projects/${projectId}/mcp-servers`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "desktop-app",
+          config: { desktop: { command: "/usr/bin/cursor" } },
+          enabled: true,
+        }),
+      });
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.name).toBe("desktop-app");
+      expect(json.config).toContain("desktop");
+      expect(json.command).toBe("/usr/bin/cursor");
+    });
+
+    it("POST /api/projects/:id/mcp-servers rejects invalid url config", async () => {
+      const res = await fetch(`/api/projects/${projectId}/mcp-servers`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "bad",
+          config: { url: "not-a-valid-url" },
+        }),
+      });
+      expect(res.status).toBe(400);
+    });
   });
 
   describe("Chats CRUD", () => {

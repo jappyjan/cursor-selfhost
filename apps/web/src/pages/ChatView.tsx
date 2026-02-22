@@ -105,6 +105,7 @@ export function ChatView() {
     queryKey: ["messages", chatId],
     queryFn: () => fetchMessages(chatId!),
     enabled: !!chatId,
+    refetchInterval: (query) => (query.state.data ? 3000 : false),
   });
   const { data: cursorStatus } = useQuery({
     queryKey: ["cursorStatus"],
@@ -301,8 +302,10 @@ export function ChatView() {
     return null;
   }
 
+  const lastAssistantIdx = messages.map((m, i) => (m.role === "assistant" ? i : -1)).filter((i) => i >= 0).pop() ?? -1;
   const displayItems: DisplayItem[] = [];
-  for (const m of messages) {
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
     if (m.role === "user") {
       displayItems.push({
         type: "user",
@@ -310,6 +313,9 @@ export function ChatView() {
         content: m.content,
         imageUrls: m.imageUrls,
       });
+      continue;
+    }
+    if (isViewingSendingChat && isStreaming && i === lastAssistantIdx) {
       continue;
     }
     const blocks = parseBlocks(m);

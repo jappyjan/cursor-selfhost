@@ -23,6 +23,7 @@ describe("mcp", () => {
         command: "npx",
         args: JSON.stringify(["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]),
         env: null,
+        config: null,
         enabled: true,
       },
     ];
@@ -44,6 +45,7 @@ describe("mcp", () => {
         command: "npx",
         args: JSON.stringify(["-y", "@modelcontextprotocol/server-github"]),
         env: JSON.stringify({ GITHUB_TOKEN: "secret" }),
+        config: null,
         enabled: true,
       },
     ];
@@ -61,6 +63,7 @@ describe("mcp", () => {
         command: "npx",
         args: "[]",
         env: null,
+        config: null,
         enabled: true,
       },
       {
@@ -69,6 +72,7 @@ describe("mcp", () => {
         command: "npx",
         args: "[]",
         env: null,
+        config: null,
         enabled: false,
       },
     ];
@@ -87,6 +91,7 @@ describe("mcp", () => {
         command: "npx",
         args: "[]",
         env: null,
+        config: null,
         enabled: false,
       },
     ];
@@ -108,6 +113,7 @@ describe("mcp", () => {
         command: "node",
         args: "[]",
         env: null,
+        config: null,
         enabled: true,
       },
     ];
@@ -126,6 +132,7 @@ describe("mcp", () => {
         command: "npx",
         args: "not-json",
         env: null,
+        config: null,
         enabled: true,
       },
     ];
@@ -133,5 +140,93 @@ describe("mcp", () => {
     const content = await readFile(join(tmpDir, ".cursor", "mcp.json"), "utf-8");
     const parsed = JSON.parse(content);
     expect(parsed.mcpServers["bad-args"].command).toBe("npx");
+  });
+
+  it("writes url config for HTTP/Streamable transport", async () => {
+    const servers: McpServerConfig[] = [
+      {
+        id: "1",
+        name: "remote-mcp",
+        command: "url",
+        args: "[]",
+        env: null,
+        config: JSON.stringify({ url: "https://example.com/mcp" }),
+        enabled: true,
+      },
+    ];
+    await writeProjectMcpConfig(tmpDir, servers);
+    const content = await readFile(join(tmpDir, ".cursor", "mcp.json"), "utf-8");
+    const parsed = JSON.parse(content);
+    expect(parsed.mcpServers["remote-mcp"]).toEqual({ url: "https://example.com/mcp" });
+  });
+
+  it("writes url config with headers", async () => {
+    const servers: McpServerConfig[] = [
+      {
+        id: "1",
+        name: "auth-mcp",
+        command: "url",
+        args: "[]",
+        env: null,
+        config: JSON.stringify({
+          url: "https://api.example.com/mcp",
+          headers: { Authorization: "Bearer token123" },
+        }),
+        enabled: true,
+      },
+    ];
+    await writeProjectMcpConfig(tmpDir, servers);
+    const content = await readFile(join(tmpDir, ".cursor", "mcp.json"), "utf-8");
+    const parsed = JSON.parse(content);
+    expect(parsed.mcpServers["auth-mcp"]).toEqual({
+      url: "https://api.example.com/mcp",
+      headers: { Authorization: "Bearer token123" },
+    });
+  });
+
+  it("writes desktop config for Cursor Desktop", async () => {
+    const servers: McpServerConfig[] = [
+      {
+        id: "1",
+        name: "desktop-app",
+        command: "/usr/bin/cursor-desktop",
+        args: "[]",
+        env: null,
+        config: JSON.stringify({ desktop: { command: "/usr/bin/cursor-desktop" } }),
+        enabled: true,
+      },
+    ];
+    await writeProjectMcpConfig(tmpDir, servers);
+    const content = await readFile(join(tmpDir, ".cursor", "mcp.json"), "utf-8");
+    const parsed = JSON.parse(content);
+    expect(parsed.mcpServers["desktop-app"]).toEqual({
+      desktop: { command: "/usr/bin/cursor-desktop" },
+    });
+  });
+
+  it("writes stdio config from config JSON when present", async () => {
+    const servers: McpServerConfig[] = [
+      {
+        id: "1",
+        name: "from-config",
+        command: "npx",
+        args: "[]",
+        env: null,
+        config: JSON.stringify({
+          command: "node",
+          args: ["server.js", "--port", "3000"],
+          env: { NODE_ENV: "production" },
+        }),
+        enabled: true,
+      },
+    ];
+    await writeProjectMcpConfig(tmpDir, servers);
+    const content = await readFile(join(tmpDir, ".cursor", "mcp.json"), "utf-8");
+    const parsed = JSON.parse(content);
+    expect(parsed.mcpServers["from-config"]).toEqual({
+      command: "node",
+      args: ["server.js", "--port", "3000"],
+      env: { NODE_ENV: "production" },
+    });
   });
 });

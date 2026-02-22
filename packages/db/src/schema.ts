@@ -56,12 +56,14 @@ export const projectMcpServers = sqliteTable("project_mcp_servers", {
     .references(() => projects.id, { onDelete: "cascade" }),
   /** Display name (e.g. "filesystem", "github") */
   name: text("name").notNull(),
-  /** Command to run (e.g. "npx", "node") */
+  /** Command to run (e.g. "npx", "node") — used for stdio transport and backward compat */
   command: text("command").notNull(),
   /** JSON array of args (e.g. ["-y", "@modelcontextprotocol/server-filesystem"]) */
   args: text("args").notNull(),
   /** JSON object of env vars for auth (e.g. {"API_KEY": "xxx"}). Stored as-is; consider encryption for sensitive deployments. */
   env: text("env"),
+  /** Full MCP server config as JSON. When set, overrides command/args/env for mcp.json. Supports stdio, url (HTTP), desktop. */
+  config: text("config"),
   /** Whether this server is enabled for the project */
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
   /** Order for display/merge */

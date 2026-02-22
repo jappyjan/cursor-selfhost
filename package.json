@@ -15,9 +15,11 @@
     "start:api": "pnpm --filter api start",
     "start:web": "pnpm --filter web build && pnpm --filter web preview",
     "stop": "./scripts/stop.sh",
-    "restart": "./scripts/restart.sh"
+    "restart": "./scripts/restart.sh",
+    "prepare": "husky"
   },
   "devDependencies": {
+    "husky": "^9.1.7",
     "typescript": "^5.7.2"
   },
   "packageManager": "pnpm@9.14.2"

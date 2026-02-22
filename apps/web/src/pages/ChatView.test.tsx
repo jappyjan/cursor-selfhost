@@ -4,12 +4,13 @@
  * - These tests verify ChatView shows loading only when sending from the current chat.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { HeaderProvider } from "@/contexts/HeaderContext";
 import { ChatView } from "./ChatView";
 import * as api from "@/lib/api";
+import type { StreamChunk } from "@/lib/api";
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof api>();
@@ -114,7 +115,7 @@ describe("ChatView per-chat loading state", () => {
     });
     const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
 
-    let onChunk: ((chunk: { type: string; title?: string }) => void) | null = null;
+    let onChunk: ((chunk: StreamChunk) => void) | null = null;
     vi.mocked(api.sendMessageStreaming).mockImplementation((_chatId, _content, cb) => {
       onChunk = cb;
       return Promise.resolve();
@@ -148,5 +149,126 @@ describe("ChatView per-chat loading state", () => {
 
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["chat", "chat-1"] });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["chats"] });
+  });
+
+  it("displays error when sendMessageStreaming throws", async () => {
+    vi.mocked(api.sendMessageStreaming).mockRejectedValue(new Error("Chat not found"));
+
+    renderChatAt("chat-1");
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText(/Send a message/)).toBeInTheDocument();
+    });
+
+    const input = screen.getByPlaceholderText(/Send a message/);
+    fireEvent.change(input, { target: { value: "Hello" } });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: false });
+
+    await waitFor(() => {
+      expect(screen.getByText("Chat not found")).toBeInTheDocument();
+    });
+  });
+
+  it("displays error when stream emits error chunk", async () => {
+    let onChunk: ((chunk: StreamChunk) => void) | null = null;
+    vi.mocked(api.sendMessageStreaming).mockImplementation((_chatId, _content, cb) => {
+      onChunk = cb;
+      return Promise.resolve();
+    });
+
+    renderChatAt("chat-1");
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText(/Send a message/)).toBeInTheDocument();
+    });
+
+    const input = screen.getByPlaceholderText(/Send a message/);
+    fireEvent.change(input, { target: { value: "Hello" } });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: false });
+
+    await waitFor(() => {
+      expect(onChunk).toBeTruthy();
+    });
+
+    await act(() => {
+      onChunk!({ type: "error", error: "Cursor CLI exited with code 1" });
+    });
+
+    expect(screen.getByText("Cursor CLI exited with code 1")).toBeInTheDocument();
+  });
+
+  it("shows streaming blocks instead of last assistant from DB when streaming (avoids duplication)", async () => {
+    const userMsg = {
+      id: "msg-1",
+      chatId: "chat-1",
+      role: "user" as const,
+      content: "Hello",
+      createdAt: new Date().toISOString(),
+    };
+    const assistantMsg = {
+      id: "msg-2",
+      chatId: "chat-1",
+      role: "assistant" as const,
+      content: "Partial",
+      createdAt: new Date().toISOString(),
+      blocks: JSON.stringify([{ type: "text" as const, content: "Partial" }]),
+    };
+
+    vi.mocked(api.fetchMessages).mockResolvedValue([userMsg, assistantMsg]);
+
+    let onChunk: ((chunk: StreamChunk) => void) | null = null;
+    vi.mocked(api.sendMessageStreaming).mockImplementation((_chatId, _content, cb) => {
+      onChunk = cb;
+      return new Promise(() => {});
+    });
+
+    renderChatAt("chat-1");
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText(/Send a message/)).toBeInTheDocument();
+    });
+
+    const input = screen.getByPlaceholderText(/Send a message/);
+    fireEvent.change(input, { target: { value: "Hi" } });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: false });
+
+    await waitFor(() => {
+      expect(onChunk).toBeTruthy();
+    });
+
+    await act(() => {
+      onChunk!({ type: "block", block: { type: "text", content: "Streaming " } });
+      onChunk!({ type: "block", block: { type: "text", content: "content" } });
+    });
+
+    expect(screen.getByText(/Streaming content/)).toBeInTheDocument();
+    expect(screen.queryByText(/^Partial$/)).not.toBeInTheDocument();
+  });
+
+  it("loads all messages from fetchMessages and displays them", async () => {
+    const messages = [
+      {
+        id: "msg-1",
+        chatId: "chat-1",
+        role: "user" as const,
+        content: "Hello",
+        createdAt: new Date().toISOString(),
+      },
+      {
+        id: "msg-2",
+        chatId: "chat-1",
+        role: "assistant" as const,
+        content: "Hi there!",
+        createdAt: new Date().toISOString(),
+      },
+    ];
+    vi.mocked(api.fetchMessages).mockResolvedValue(messages);
+
+    renderChatAt("chat-1");
+
+    await waitFor(() => {
+      expect(screen.getByText("Hello")).toBeInTheDocument();
+    });
+    expect(screen.getByText("Hi there!")).toBeInTheDocument();
   });
 });

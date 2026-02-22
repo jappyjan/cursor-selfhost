@@ -35,14 +35,16 @@ mkdir -p "$(dirname "$DB_PATH")"
 echo "Running migrations..."
 DATABASE_PATH="$DB_PATH" pnpm --filter db migrate
 
-# Fallback: ensure image_paths exists (migration 0003) — drizzle-kit may skip it in some setups
+# Fallback: ensure schema matches code when migrations get out of sync (e.g. different drizzle-kit vs drizzle-orm tracking)
 (cd "$ROOT/packages/db" && DB_PATH="$DB_PATH" pnpm exec node -e '
   const Database = require("better-sqlite3");
   const path = process.env.DB_PATH;
   if (!path) process.exit(0);
   const db = new Database(path);
-  const cols = db.prepare("PRAGMA table_info(messages)").all().map((r) => r.name);
-  if (!cols.includes("image_paths")) {
+
+  // 0003: image_paths on messages
+  const msgCols = db.prepare("PRAGMA table_info(messages)").all().map((r) => r.name);
+  if (!msgCols.includes("image_paths")) {
     try {
       db.exec("ALTER TABLE messages ADD COLUMN image_paths text");
       console.log("Applied fallback migration (image_paths)");
@@ -50,6 +52,39 @@ DATABASE_PATH="$DB_PATH" pnpm --filter db migrate
       if (!e.message.includes("duplicate")) throw e;
     }
   }
+
+  // 0004: project_mcp_servers table
+  const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='project_mcp_servers'").all();
+  if (tables.length === 0) {
+    db.exec(`
+      CREATE TABLE project_mcp_servers (
+        id text PRIMARY KEY NOT NULL,
+        project_id text NOT NULL REFERENCES projects(id) ON UPDATE no action ON DELETE cascade,
+        name text NOT NULL,
+        command text NOT NULL,
+        args text NOT NULL,
+        env text,
+        config text,
+        enabled integer NOT NULL DEFAULT 1,
+        sort_order integer NOT NULL DEFAULT 0,
+        created_at integer NOT NULL,
+        updated_at integer NOT NULL
+      )
+    `);
+    console.log("Applied fallback migration (project_mcp_servers)");
+  }
+
+  // 0005: config column on project_mcp_servers
+  const mcpCols = tables.length > 0 ? db.prepare("PRAGMA table_info(project_mcp_servers)").all().map((r) => r.name) : [];
+  if (mcpCols.length > 0 && !mcpCols.includes("config")) {
+    try {
+      db.exec("ALTER TABLE project_mcp_servers ADD COLUMN config text");
+      console.log("Applied fallback migration (mcp config)");
+    } catch (e) {
+      if (!e.message.includes("duplicate")) throw e;
+    }
+  }
+
   db.close();
 ') 2>/dev/null || true
 

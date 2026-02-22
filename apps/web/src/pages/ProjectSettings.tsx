@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -9,6 +9,8 @@ import {
   deleteMcpServer,
   loginMcpServer,
   type McpServer,
+  type McpServerConfig,
+  type CreateMcpServerBody,
 } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,7 +30,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Settings, Plus, Pencil, Trash2, ArrowLeft, KeyRound } from "lucide-react";
+import { Settings, Plus, Pencil, Trash2, ArrowLeft, KeyRound, Terminal, Globe, Monitor } from "lucide-react";
 
 export function ProjectSettings() {
   const { slug } = useParams<{ slug: string }>();
@@ -50,8 +52,7 @@ export function ProjectSettings() {
   });
 
   const createMutation = useMutation({
-    mutationFn: (body: { name: string; command: string; args: string[]; env?: Record<string, string> }) =>
-      createMcpServer(project!.id, body),
+    mutationFn: (body: CreateMcpServerBody) => createMcpServer(project!.id, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["mcp-servers", project?.id] });
       setAddOpen(false);
@@ -63,7 +64,7 @@ export function ProjectSettings() {
       body,
     }: {
       serverId: string;
-      body: { name?: string; command?: string; args?: string[]; env?: Record<string, string>; enabled?: boolean };
+      body: { name?: string; config?: McpServerConfig; command?: string; args?: string[]; env?: Record<string, string>; enabled?: boolean };
     }) => updateMcpServer(project!.id, serverId, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["mcp-servers", project?.id] });
@@ -163,7 +164,15 @@ export function ProjectSettings() {
           onSubmit={(body) =>
             updateMutation.mutate({
               serverId: editing.id,
-              body: { name: body.name, command: body.command, args: body.args, env: body.env },
+              body:
+                "config" in body && body.config
+                  ? { name: body.name, config: body.config }
+                  : {
+                      name: body.name,
+                      command: (body as { command: string }).command,
+                      args: (body as { args?: string[] }).args,
+                      env: (body as { env?: Record<string, string> }).env,
+                    },
             })
           }
           isPending={updateMutation.isPending}
@@ -208,6 +217,33 @@ export function ProjectSettings() {
   );
 }
 
+function getServerDisplayInfo(server: McpServer): { type: "stdio" | "url" | "desktop"; label: string } {
+  if (server.config) {
+    try {
+      const cfg = JSON.parse(server.config) as McpServerConfig;
+      if ("url" in cfg && cfg.url) {
+        return { type: "url", label: cfg.url };
+      }
+      if ("desktop" in cfg && cfg.desktop?.command) {
+        return { type: "desktop", label: cfg.desktop.command };
+      }
+      if ("command" in cfg && cfg.command) {
+        const args = (cfg as { args?: string[] }).args ?? [];
+        return { type: "stdio", label: [cfg.command, ...args].join(" ") };
+      }
+    } catch {
+      /* fallback */
+    }
+  }
+  let args: string[] = [];
+  try {
+    args = JSON.parse(server.args) as string[];
+  } catch {
+    /* ignore */
+  }
+  return { type: "stdio", label: [server.command, ...args].join(" ") };
+}
+
 function McpServerRow({
   server,
   onEdit,
@@ -221,19 +257,18 @@ function McpServerRow({
   onAuthenticate: () => void;
   onToggleEnabled: (enabled: boolean) => void;
 }) {
-  let args: string[] = [];
-  try {
-    args = JSON.parse(server.args) as string[];
-  } catch {
-    /* ignore */
-  }
-  const cmdDisplay = [server.command, ...args].join(" ");
+  const { type, label } = getServerDisplayInfo(server);
+  const Icon = type === "url" ? Globe : type === "desktop" ? Monitor : Terminal;
+  const showAuth = type === "stdio";
 
   return (
     <li className="flex items-center justify-between gap-4 rounded-lg border border-border bg-background p-3">
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="font-medium">{server.name}</span>
+          <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+            {type}
+          </span>
           <label className="flex cursor-pointer items-center gap-2">
             <input
               type="checkbox"
@@ -244,12 +279,17 @@ function McpServerRow({
             <span className="text-xs text-muted-foreground">Enabled</span>
           </label>
         </div>
-        <p className="mt-1 truncate font-mono text-xs text-muted-foreground">{cmdDisplay}</p>
+        <p className="mt-1 flex items-center gap-1.5 truncate font-mono text-xs text-muted-foreground">
+          <Icon className="h-3 w-3 shrink-0" />
+          {label}
+        </p>
       </div>
       <div className="flex shrink-0 gap-1">
-        <Button variant="ghost" size="icon" onClick={onAuthenticate} aria-label="Authenticate">
-          <KeyRound className="h-4 w-4" />
-        </Button>
+        {showAuth && (
+          <Button variant="ghost" size="icon" onClick={onAuthenticate} aria-label="Authenticate">
+            <KeyRound className="h-4 w-4" />
+          </Button>
+        )}
         <Button variant="ghost" size="icon" onClick={onEdit} aria-label="Edit">
           <Pencil className="h-4 w-4" />
         </Button>
@@ -334,6 +374,99 @@ function McpLoginDialog({
   );
 }
 
+type TransportType = "stdio" | "url" | "desktop";
+
+function parseServerToForm(server?: McpServer): {
+  transport: TransportType;
+  name: string;
+  command: string;
+  argsStr: string;
+  envStr: string;
+  url: string;
+  headersStr: string;
+  desktopCommand: string;
+} {
+  const defaults = {
+    transport: "stdio" as TransportType,
+    name: "",
+    command: "npx",
+    argsStr: '["-y", "@modelcontextprotocol/server-filesystem"]',
+    envStr: "",
+    url: "",
+    headersStr: "",
+    desktopCommand: "",
+  };
+  if (!server) return defaults;
+  if (server.config) {
+    try {
+      const cfg = JSON.parse(server.config) as McpServerConfig;
+      if ("url" in cfg && cfg.url) {
+        return {
+          ...defaults,
+          transport: "url",
+          name: server.name,
+          url: cfg.url,
+          headersStr: cfg.headers
+            ? Object.entries(cfg.headers)
+                .map(([k, v]) => `${k}: ${v}`)
+                .join("\n")
+            : "",
+        };
+      }
+      if ("desktop" in cfg && cfg.desktop?.command) {
+        return {
+          ...defaults,
+          transport: "desktop",
+          name: server.name,
+          desktopCommand: cfg.desktop.command,
+        };
+      }
+      if ("command" in cfg && cfg.command) {
+        const c = cfg as { command: string; args?: string[]; env?: Record<string, string> };
+        return {
+          ...defaults,
+          transport: "stdio",
+          name: server.name,
+          command: c.command,
+          argsStr: c.args ? JSON.stringify(c.args, null, 0) : "[]",
+          envStr: c.env
+            ? Object.entries(c.env)
+                .map(([k, v]) => `${k}=${v}`)
+                .join("\n")
+            : "",
+        };
+      }
+    } catch {
+      /* fallback */
+    }
+  }
+  let args: string[] = [];
+  try {
+    args = JSON.parse(server.args) as string[];
+  } catch {
+    /* ignore */
+  }
+  let envStr = "";
+  if (server.env) {
+    try {
+      const env = JSON.parse(server.env) as Record<string, string>;
+      envStr = Object.entries(env)
+        .map(([k, v]) => `${k}=${v}`)
+        .join("\n");
+    } catch {
+      /* ignore */
+    }
+  }
+  return {
+    ...defaults,
+    transport: "stdio",
+    name: server.name,
+    command: server.command,
+    argsStr: JSON.stringify(args, null, 0),
+    envStr,
+  };
+}
+
 function McpServerForm({
   open,
   onClose,
@@ -345,29 +478,60 @@ function McpServerForm({
   open: boolean;
   onClose: () => void;
   server?: McpServer;
-  onSubmit: (body: { name: string; command: string; args: string[]; env?: Record<string, string> }) => void;
+  onSubmit: (body: CreateMcpServerBody) => void;
   isPending: boolean;
   error: Error | null;
 }) {
-  const [name, setName] = useState(server?.name ?? "");
-  const [command, setCommand] = useState(server?.command ?? "npx");
-  const [argsStr, setArgsStr] = useState(
-    server?.args ? JSON.stringify(JSON.parse(server.args) as string[], null, 0) : '["-y", "@modelcontextprotocol/server-filesystem"]'
-  );
-  const [envStr, setEnvStr] = useState(() => {
-    if (!server?.env) return "";
-    try {
-      const env = JSON.parse(server.env) as Record<string, string>;
-      return Object.entries(env)
-        .map(([k, v]) => `${k}=${v}`)
-        .join("\n");
-    } catch {
-      return "";
+  const initial = parseServerToForm(server);
+  const [transport, setTransport] = useState<TransportType>(initial.transport);
+  const [name, setName] = useState(initial.name);
+  const [command, setCommand] = useState(initial.command);
+  const [argsStr, setArgsStr] = useState(initial.argsStr);
+  const [envStr, setEnvStr] = useState(initial.envStr);
+  const [url, setUrl] = useState(initial.url);
+  const [headersStr, setHeadersStr] = useState(initial.headersStr);
+  const [desktopCommand, setDesktopCommand] = useState(initial.desktopCommand);
+
+  useEffect(() => {
+    if (open) {
+      const i = parseServerToForm(server);
+      setTransport(i.transport);
+      setName(i.name);
+      setCommand(i.command);
+      setArgsStr(i.argsStr);
+      setEnvStr(i.envStr);
+      setUrl(i.url);
+      setHeadersStr(i.headersStr);
+      setDesktopCommand(i.desktopCommand);
     }
-  });
+  }, [open, server]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    const trimmedName = name.trim();
+    if (transport === "url") {
+      const headers: Record<string, string> = {};
+      if (headersStr.trim()) {
+        for (const line of headersStr.split("\n")) {
+          const colonIdx = line.indexOf(":");
+          if (colonIdx > 0) {
+            headers[line.slice(0, colonIdx).trim()] = line.slice(colonIdx + 1).trim();
+          }
+        }
+      }
+      onSubmit({
+        name: trimmedName,
+        config: { url: url.trim(), ...(Object.keys(headers).length > 0 && { headers }) },
+      });
+      return;
+    }
+    if (transport === "desktop") {
+      onSubmit({
+        name: trimmedName,
+        config: { desktop: { command: desktopCommand.trim() } },
+      });
+      return;
+    }
     let args: string[] = [];
     if (argsStr.trim()) {
       try {
@@ -388,12 +552,17 @@ function McpServerForm({
       }
       if (Object.keys(env).length === 0) env = undefined;
     }
-    onSubmit({ name: name.trim(), command: command.trim(), args, env });
+    onSubmit({
+      name: trimmedName,
+      command: command.trim(),
+      args,
+      env,
+    });
   };
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent>
+      <DialogContent className="max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{server ? "Edit MCP server" : "Add MCP server"}</DialogTitle>
         </DialogHeader>
@@ -408,32 +577,107 @@ function McpServerForm({
             />
           </div>
           <div>
-            <label className="block text-sm font-medium">Command</label>
-            <Input
-              value={command}
-              onChange={(e) => setCommand(e.target.value)}
-              placeholder="e.g. npx or node"
-              required
-            />
+            <label className="block text-sm font-medium">Transport</label>
+            <div className="mt-1.5 flex gap-2">
+              {(
+                [
+                  { value: "stdio" as const, label: "Command (stdio)", icon: Terminal },
+                  { value: "url" as const, label: "HTTP/URL", icon: Globe },
+                  { value: "desktop" as const, label: "Desktop", icon: Monitor },
+                ] as const
+              ).map(({ value, label, icon: Icon }) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setTransport(value)}
+                  className={`flex flex-1 items-center justify-center gap-1.5 rounded-md border px-3 py-2 text-sm transition-colors ${
+                    transport === value
+                      ? "border-primary bg-primary/10 text-primary"
+                      : "border-border hover:bg-muted/50"
+                  }`}
+                >
+                  <Icon className="h-4 w-4" />
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
-          <div>
-            <label className="block text-sm font-medium">Arguments (JSON array)</label>
-            <Input
-              value={argsStr}
-              onChange={(e) => setArgsStr(e.target.value)}
-              placeholder='["-y", "@modelcontextprotocol/server-filesystem", "/path"]'
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium">Environment (one KEY=value per line, for API keys)</label>
-            <textarea
-              value={envStr}
-              onChange={(e) => setEnvStr(e.target.value)}
-              placeholder={"API_KEY=xxx\nANOTHER_SECRET=yyy"}
-              className="w-full min-h-[80px] rounded-md border border-input bg-background px-3 py-2 text-sm"
-              rows={3}
-            />
-          </div>
+
+          {transport === "stdio" && (
+            <>
+              <div>
+                <label className="block text-sm font-medium">Command</label>
+                <Input
+                  value={command}
+                  onChange={(e) => setCommand(e.target.value)}
+                  placeholder="e.g. npx or node"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium">Arguments (JSON array)</label>
+                <Input
+                  value={argsStr}
+                  onChange={(e) => setArgsStr(e.target.value)}
+                  placeholder='["-y", "@modelcontextprotocol/server-filesystem", "/path"]'
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium">Environment (one KEY=value per line)</label>
+                <textarea
+                  value={envStr}
+                  onChange={(e) => setEnvStr(e.target.value)}
+                  placeholder={"API_KEY=xxx\nANOTHER_SECRET=yyy"}
+                  className="w-full min-h-[80px] rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  rows={3}
+                />
+              </div>
+            </>
+          )}
+
+          {transport === "url" && (
+            <>
+              <div>
+                <label className="block text-sm font-medium">URL</label>
+                <Input
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  placeholder="https://example.com/mcp"
+                  required
+                />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  HTTP/Streamable MCP endpoint. Must start with http:// or https://
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium">Headers (optional)</label>
+                <textarea
+                  value={headersStr}
+                  onChange={(e) => setHeadersStr(e.target.value)}
+                  placeholder={"Authorization: Bearer xxx\nX-Custom-Header: value"}
+                  className="w-full min-h-[60px] rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  rows={2}
+                />
+                <p className="mt-1 text-xs text-muted-foreground">One Header: value per line</p>
+              </div>
+            </>
+          )}
+
+          {transport === "desktop" && (
+            <div>
+              <label className="block text-sm font-medium">Desktop command</label>
+              <Input
+                value={desktopCommand}
+                onChange={(e) => setDesktopCommand(e.target.value)}
+                placeholder="e.g. /path/to/cursor-desktop-app"
+                required
+              />
+              <p className="mt-1 text-xs text-muted-foreground">
+                Command for Cursor Desktop app integration
+              </p>
+            </div>
+          )}
+
           {error && <p className="text-sm text-destructive">{(error as Error).message}</p>}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>

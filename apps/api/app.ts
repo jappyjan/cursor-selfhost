@@ -30,6 +30,7 @@ import {
   isPathUnderBase,
   isValidGitUrl,
   mcpServerSchema,
+  mcpServerPatchSchema,
 } from "./src/validation";
 
 export const app = new Hono();
@@ -321,6 +322,48 @@ app.get("/api/projects/:projectId/mcp-servers", async (c) => {
   return c.json(list);
 });
 
+function mcpPayloadToDbRow(body: {
+  name: string;
+  config?: { command?: string; url?: string; desktop?: { command: string }; args?: string[]; env?: Record<string, string> };
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+}): { command: string; args: string; env: string | null; config: string | null } {
+  if (body.config) {
+    const cfg = body.config;
+    if ("url" in cfg && cfg.url) {
+      return {
+        command: "url",
+        args: "[]",
+        env: null,
+        config: JSON.stringify(cfg),
+      };
+    }
+    if ("desktop" in cfg && cfg.desktop?.command) {
+      return {
+        command: cfg.desktop.command,
+        args: "[]",
+        env: null,
+        config: JSON.stringify(cfg),
+      };
+    }
+    if ("command" in cfg && cfg.command) {
+      return {
+        command: cfg.command,
+        args: JSON.stringify(cfg.args ?? []),
+        env: cfg.env ? JSON.stringify(cfg.env) : null,
+        config: JSON.stringify(cfg),
+      };
+    }
+  }
+  return {
+    command: body.command ?? "npx",
+    args: JSON.stringify(body.args ?? []),
+    env: body.env ? JSON.stringify(body.env) : null,
+    config: null,
+  };
+}
+
 app.post("/api/projects/:projectId/mcp-servers", async (c) => {
   const projectId = c.req.param("projectId");
   const projectRows = await db.select().from(schema.projects).where(eq(schema.projects.id, projectId));
@@ -334,13 +377,15 @@ app.post("/api/projects/:projectId/mcp-servers", async (c) => {
   const id = nanoid();
   const now = new Date();
   const enabled = body.enabled ?? true;
+  const row = mcpPayloadToDbRow(body);
   await db.insert(schema.projectMcpServers).values({
     id,
     projectId,
     name: body.name,
-    command: body.command,
-    args: JSON.stringify(body.args),
-    env: body.env ? JSON.stringify(body.env) : null,
+    command: row.command,
+    args: row.args,
+    env: row.env,
+    config: row.config,
     enabled,
     sortOrder: 0,
     createdAt: now,
@@ -370,13 +415,49 @@ app.patch("/api/projects/:projectId/mcp-servers/:serverId", async (c) => {
   const current = rows[0];
   const projectRows = await db.select().from(schema.projects).where(eq(schema.projects.id, projectId));
   const project = projectRows[0];
-  const body = await c.req.json<{ name?: string; command?: string; args?: string[]; env?: Record<string, string>; enabled?: boolean }>();
+  const raw = await c.req.json<{
+    name?: string;
+    command?: string;
+    args?: string[];
+    env?: Record<string, string>;
+    config?: unknown;
+    enabled?: boolean;
+  }>();
+  const parsed = mcpServerPatchSchema.safeParse(raw);
+  if (!parsed.success) {
+    return c.json({ error: parsed.error.message ?? "Validation failed" }, 400);
+  }
+  const body = parsed.data;
   const updates: Record<string, unknown> = { updatedAt: new Date() };
   if (body.name !== undefined) updates.name = body.name;
-  if (body.command !== undefined) updates.command = body.command;
-  if (body.args !== undefined) updates.args = JSON.stringify(body.args);
-  if (body.env !== undefined) updates.env = body.env ? JSON.stringify(body.env) : null;
   if (body.enabled !== undefined) updates.enabled = body.enabled;
+  if (body.config !== undefined || body.command !== undefined || body.args !== undefined || body.env !== undefined) {
+    let args: string[] | undefined = body.args;
+    if (args === undefined && current.args) {
+      try {
+        args = JSON.parse(current.args) as string[];
+      } catch {
+        args = [];
+      }
+    }
+    let env: Record<string, string> | undefined = body.env;
+    if (env === undefined && current.env) {
+      try {
+        env = JSON.parse(current.env) as Record<string, string>;
+      } catch {
+        env = undefined;
+      }
+    }
+    const row = mcpPayloadToDbRow(
+      body.config !== undefined
+        ? { config: body.config as Parameters<typeof mcpPayloadToDbRow>[0]["config"] }
+        : { command: body.command ?? current.command, args, env }
+    );
+    updates.command = row.command;
+    updates.args = row.args;
+    updates.env = row.env;
+    updates.config = row.config;
+  }
   await db.update(schema.projectMcpServers).set(updates as Record<string, unknown>).where(eq(schema.projectMcpServers.id, serverId));
   const updated = await db.select().from(schema.projectMcpServers).where(eq(schema.projectMcpServers.id, serverId));
   const updatedServer = updated[0];
@@ -390,7 +471,7 @@ app.patch("/api/projects/:projectId/mcp-servers/:serverId", async (c) => {
   } else if (body.enabled === false) {
     await disableMcpServer(project.path, current.name);
     await writeProjectMcpConfig(project.path, allServers);
-  } else if (body.name !== undefined || body.command !== undefined || body.args !== undefined || body.env !== undefined) {
+  } else if (Object.keys(updates).length > 1) {
     await writeProjectMcpConfig(project.path, allServers);
   }
   return c.json(updatedServer);
@@ -660,12 +741,17 @@ app.post("/api/chats/:id/messages", async (c) => {
     imagePaths: storedImagePaths.length ? JSON.stringify(storedImagePaths) : null,
   });
 
-  // Write per-project MCP config so Cursor CLI picks it up when spawning with --workspace
-  const mcpServers = await db
-    .select()
-    .from(schema.projectMcpServers)
-    .where(eq(schema.projectMcpServers.projectId, project.id));
-  await writeProjectMcpConfig(project.path, mcpServers);
+  // Write per-project MCP config so Cursor CLI picks it up when spawning with --workspace.
+  // Defensive: if project_mcp_servers table/columns missing (migration not run), proceed without MCP.
+  try {
+    const mcpServers = await db
+      .select()
+      .from(schema.projectMcpServers)
+      .where(eq(schema.projectMcpServers.projectId, project.id));
+    await writeProjectMcpConfig(project.path, mcpServers);
+  } catch (e) {
+    console.warn("MCP config skipped (table/schema may be missing):", (e as Error).message);
+  }
 
   const stdinPayload = buildAgentStdin(content, imagePaths);
   const proc = spawnCursorAgent(stdinPayload, {
@@ -678,6 +764,44 @@ app.post("/api/chats/:id/messages", async (c) => {
   const blocks: Block[] = [];
   let resultContent: string | null = null; // fallback when Cursor sends only result (no assistant chunks)
   let stderrBuffer = "";
+  const assistantMsgId = nanoid();
+  let assistantMessageInserted = false;
+  let persistChain = Promise.resolve();
+
+  /** Persist assistant message incrementally — runs regardless of client connection. Serialized to avoid races. */
+  const persistBlocks = (): Promise<void> => {
+    persistChain = persistChain.then(async () => {
+      const textBlocks = blocks.filter((b): b is { type: "text"; content: string } => b.type === "text");
+      const fullContent = textBlocks.length > 0 ? textBlocks.map((b) => b.content).join("") : (resultContent ?? "");
+      if (!fullContent && blocks.length === 0) return;
+      const blocksJson = blocks.length > 0 ? JSON.stringify(blocks) : null;
+      try {
+        if (!assistantMessageInserted) {
+          assistantMessageInserted = true;
+          await db.insert(schema.messages).values({
+            id: assistantMsgId,
+            chatId,
+            role: "assistant",
+            content: fullContent || "",
+            createdAt: new Date(),
+            activities: null,
+            blocks: blocksJson,
+          });
+        } else {
+          await db
+            .update(schema.messages)
+            .set({ content: fullContent || "", blocks: blocksJson, createdAt: new Date() })
+            .where(eq(schema.messages.id, assistantMsgId));
+        }
+      } catch (e) {
+        const err = e as { code?: string };
+        if (err.code !== "SQLITE_CONSTRAINT_FOREIGNKEY") {
+          console.error("Failed to persist assistant message:", e);
+        }
+      }
+    });
+    return persistChain;
+  };
 
   const stream = new ReadableStream({
     start(controller) {
@@ -688,7 +812,7 @@ app.post("/api/chats/:id/messages", async (c) => {
         try {
           controller.enqueue(data);
         } catch {
-          /* stream may be closed */
+          /* stream may be closed — client disconnected; persistence continues */
         }
       };
       let streamClosed = false;
@@ -718,6 +842,7 @@ app.post("/api/chats/:id/messages", async (c) => {
             const block = { type: "activity" as const, kind: parsed.type, label, ...(details && { details }), ...(toolName && { toolName }), ...(args && Object.keys(args).length > 0 && { args }), ...(output && { output }) };
             blocks.push(block);
             safeEnqueue(new TextEncoder().encode(JSON.stringify({ type: "block", block }) + "\n"));
+            void persistBlocks();
             continue;
           }
           // Assistant chunks: append to last text block or create new one
@@ -731,6 +856,7 @@ app.post("/api/chats/:id/messages", async (c) => {
                 blocks.push({ type: "text", content: extracted });
               }
               safeEnqueue(new TextEncoder().encode(JSON.stringify({ type: "block", block: { type: "text", content: extracted } }) + "\n"));
+              void persistBlocks();
             }
             continue;
           }
@@ -780,18 +906,7 @@ app.post("/api/chats/:id/messages", async (c) => {
           safeEnqueue(new TextEncoder().encode(JSON.stringify({ type: "error", error: detail }) + "\n"));
         }
         try {
-          if (fullContent || blocks.length > 0) {
-            const blocksJson = blocks.length > 0 ? JSON.stringify(blocks) : null;
-            await db.insert(schema.messages).values({
-              id: nanoid(),
-              chatId,
-              role: "assistant",
-              content: fullContent || "",
-              createdAt: new Date(),
-              activities: null,
-              blocks: blocksJson,
-            });
-          }
+          await persistBlocks();
           if (sessionId) {
             await db.update(schema.chats).set({ sessionId, updatedAt: new Date() }).where(eq(schema.chats.id, chatId));
           }
