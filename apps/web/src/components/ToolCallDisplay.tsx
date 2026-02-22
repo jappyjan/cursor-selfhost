@@ -144,33 +144,21 @@ function TerminalView({
   output?: string;
 }) {
   return (
-    <div className="flex flex-col gap-0 overflow-hidden rounded-md border border-[#2d2d2d] bg-[#1a1a1a] shadow-inner">
-      {/* Terminal header bar */}
-      <div className="flex shrink-0 items-center gap-2 border-b border-[#2d2d2d] bg-[#252525] px-3 py-1.5">
-        <span className="flex gap-1.5">
-          <span className="h-2.5 w-2.5 rounded-full bg-[#ff5f56]" />
-          <span className="h-2.5 w-2.5 rounded-full bg-[#ffbd2e]" />
-          <span className="h-2.5 w-2.5 rounded-full bg-[#27c93f]" />
-        </span>
-        <span className="font-mono text-[10px] text-[#8b8b8b]">terminal</span>
-      </div>
-      {/* Terminal body: prompt + output */}
-      <div className="min-h-[4rem] max-h-64 flex-1 overflow-y-auto overflow-x-auto p-3 font-mono text-xs">
-        {/* Input / command line */}
-        <div className="flex items-start gap-1">
-          <span className="shrink-0 text-emerald-400/90">$</span>
-          {workingDirectory && (
-            <span className="shrink-0 text-amber-500/90">({workingDirectory})</span>
-          )}
-          <span className="text-[#e0e0e0] break-all">{command || "(no command)"}</span>
-        </div>
-        {/* Output */}
-        {output !== undefined && output !== "" && (
-          <pre className="mt-2 whitespace-pre-wrap break-words text-[#c0c0c0]">{output}</pre>
+    <div className="max-h-64 overflow-y-auto overflow-x-auto rounded-md border border-border bg-muted/50 p-3 font-mono text-xs">
+      {/* Command line */}
+      <div className="flex items-start gap-1">
+        <span className="shrink-0 text-muted-foreground">$</span>
+        {workingDirectory && (
+          <span className="shrink-0 text-muted-foreground">({workingDirectory})</span>
         )}
-        {output === "" && <div className="mt-1 text-[#6b6b6b]">(no output)</div>}
-        {output === undefined && <div className="mt-1 text-[#6b6b6b] animate-pulse">Running…</div>}
+        <span className="break-all text-foreground">{command || "(no command)"}</span>
       </div>
+      {/* Output */}
+      {output !== undefined && output !== "" && (
+        <pre className="mt-2 whitespace-pre-wrap break-words text-muted-foreground">{output}</pre>
+      )}
+      {output === "" && <div className="mt-1 text-muted-foreground/70">(no output)</div>}
+      {output === undefined && <div className="mt-1 text-muted-foreground/70 animate-pulse">Running…</div>}
     </div>
   );
 }
