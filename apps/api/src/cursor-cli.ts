@@ -166,6 +166,52 @@ export async function createCursorSession(workspacePath: string): Promise<string
 }
 
 /**
+ * Generate a short chat title from the first user message using Cursor CLI.
+ * Spawns a one-off CLI call with a prompt asking for a title recommendation.
+ * Returns null on failure or if the response is empty.
+ */
+export async function generateChatTitle(
+  firstMessageContent: string,
+  workspacePath: string
+): Promise<string | null> {
+  const truncated = firstMessageContent.slice(0, 500);
+  const prompt = `Summarize the following in 3-5 words as a chat title. Reply with ONLY the title, nothing else:\n\n${truncated}`;
+
+  return new Promise((resolve) => {
+    const proc = spawnCursorAgent(prompt, { workspace: workspacePath });
+    let resultText = "";
+    let ndjsonBuffer = "";
+
+    proc.stdout?.on("data", (chunk: Buffer) => {
+      ndjsonBuffer += chunk.toString("utf-8");
+      const lines = ndjsonBuffer.split("\n");
+      ndjsonBuffer = lines.pop() ?? "";
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        const parsed = parseCursorLine(trimmed);
+        if (!parsed) continue;
+        if (isAssistantContent(parsed)) {
+          resultText += extractTextFromLine(parsed);
+        } else if (parsed.type === "result" && parsed.result) {
+          resultText = parsed.result;
+        }
+      }
+    });
+
+    proc.on("close", () => {
+      const title = resultText
+        .trim()
+        .split(/\n/)[0]
+        .trim()
+        .slice(0, 80);
+      resolve(title || null);
+    });
+    proc.on("error", () => resolve(null));
+  });
+}
+
+/**
  * Check if Cursor CLI is installed and authenticated.
  * Returns ok if CURSOR_API_KEY is set, or if "cursor agent status" exits 0.
  */

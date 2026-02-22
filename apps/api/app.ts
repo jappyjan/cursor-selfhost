@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, asc } from "drizzle-orm";
 import path from "path";
 import { homedir } from "os";
 import { db } from "@cursor-selfhost/db";
@@ -15,11 +15,14 @@ import {
   isAssistantContent,
   isActivityContent,
   extractActivityInfo,
+  generateChatTitle,
 } from "./src/cursor-cli";
+import { writeProjectMcpConfig } from "./src/mcp";
 import {
   createProjectSchema,
   isPathUnderBase,
   isValidGitUrl,
+  mcpServerSchema,
 } from "./src/validation";
 
 export const app = new Hono();
@@ -298,6 +301,79 @@ app.post("/api/projects", async (c) => {
   return c.json(rows[0]);
 });
 
+// Project MCP servers — per-project configuration
+app.get("/api/projects/:projectId/mcp-servers", async (c) => {
+  const projectId = c.req.param("projectId");
+  const projectRows = await db.select().from(schema.projects).where(eq(schema.projects.id, projectId));
+  if (projectRows.length === 0) return c.json({ error: "Project not found" }, 404);
+  const list = await db
+    .select()
+    .from(schema.projectMcpServers)
+    .where(eq(schema.projectMcpServers.projectId, projectId))
+    .orderBy(asc(schema.projectMcpServers.sortOrder), asc(schema.projectMcpServers.createdAt));
+  return c.json(list);
+});
+
+app.post("/api/projects/:projectId/mcp-servers", async (c) => {
+  const projectId = c.req.param("projectId");
+  const projectRows = await db.select().from(schema.projects).where(eq(schema.projects.id, projectId));
+  if (projectRows.length === 0) return c.json({ error: "Project not found" }, 404);
+  const raw = await c.req.json();
+  const parsed = mcpServerSchema.safeParse(raw);
+  if (!parsed.success) {
+    return c.json({ error: parsed.error.message ?? "Validation failed" }, 400);
+  }
+  const body = parsed.data;
+  const id = nanoid();
+  const now = new Date();
+  await db.insert(schema.projectMcpServers).values({
+    id,
+    projectId,
+    name: body.name,
+    command: body.command,
+    args: JSON.stringify(body.args),
+    env: body.env ? JSON.stringify(body.env) : null,
+    enabled: body.enabled ?? true,
+    sortOrder: 0,
+    createdAt: now,
+    updatedAt: now,
+  });
+  const rows = await db.select().from(schema.projectMcpServers).where(eq(schema.projectMcpServers.id, id));
+  return c.json(rows[0]);
+});
+
+app.patch("/api/projects/:projectId/mcp-servers/:serverId", async (c) => {
+  const projectId = c.req.param("projectId");
+  const serverId = c.req.param("serverId");
+  const rows = await db
+    .select()
+    .from(schema.projectMcpServers)
+    .where(eq(schema.projectMcpServers.id, serverId));
+  if (rows.length === 0 || rows[0].projectId !== projectId) return c.json({ error: "MCP server not found" }, 404);
+  const body = await c.req.json<{ name?: string; command?: string; args?: string[]; env?: Record<string, string>; enabled?: boolean }>();
+  const updates: Record<string, unknown> = { updatedAt: new Date() };
+  if (body.name !== undefined) updates.name = body.name;
+  if (body.command !== undefined) updates.command = body.command;
+  if (body.args !== undefined) updates.args = JSON.stringify(body.args);
+  if (body.env !== undefined) updates.env = body.env ? JSON.stringify(body.env) : null;
+  if (body.enabled !== undefined) updates.enabled = body.enabled;
+  await db.update(schema.projectMcpServers).set(updates as Record<string, unknown>).where(eq(schema.projectMcpServers.id, serverId));
+  const updated = await db.select().from(schema.projectMcpServers).where(eq(schema.projectMcpServers.id, serverId));
+  return c.json(updated[0]);
+});
+
+app.delete("/api/projects/:projectId/mcp-servers/:serverId", async (c) => {
+  const projectId = c.req.param("projectId");
+  const serverId = c.req.param("serverId");
+  const rows = await db
+    .select()
+    .from(schema.projectMcpServers)
+    .where(eq(schema.projectMcpServers.id, serverId));
+  if (rows.length === 0 || rows[0].projectId !== projectId) return c.json({ error: "MCP server not found" }, 404);
+  await db.delete(schema.projectMcpServers).where(eq(schema.projectMcpServers.id, serverId));
+  return c.json({ ok: true });
+});
+
 // Chats
 app.get("/api/projects/:projectId/chats", async (c) => {
   const projectId = c.req.param("projectId");
@@ -496,6 +572,9 @@ app.post("/api/chats/:id/messages", async (c) => {
     }
   }
 
+  const prevMessages = await db.select().from(schema.messages).where(eq(schema.messages.chatId, chatId));
+  const isFirstMessage = prevMessages.length === 0;
+
   const userMsgId = nanoid();
   const now = new Date();
   const displayContent = content || (imagePaths?.length ? `[${imagePaths.length} image(s) attached]` : "");
@@ -507,6 +586,13 @@ app.post("/api/chats/:id/messages", async (c) => {
     createdAt: now,
     imagePaths: storedImagePaths.length ? JSON.stringify(storedImagePaths) : null,
   });
+
+  // Write per-project MCP config so Cursor CLI picks it up when spawning with --workspace
+  const mcpServers = await db
+    .select()
+    .from(schema.projectMcpServers)
+    .where(eq(schema.projectMcpServers.projectId, project.id));
+  await writeProjectMcpConfig(project.path, mcpServers);
 
   const stdinPayload = buildAgentStdin(content, imagePaths);
   const proc = spawnCursorAgent(stdinPayload, {
@@ -635,6 +721,17 @@ app.post("/api/chats/:id/messages", async (c) => {
           }
           if (sessionId) {
             await db.update(schema.chats).set({ sessionId, updatedAt: new Date() }).where(eq(schema.chats.id, chatId));
+          }
+          // Generate chat title from first message; wait up to 3s and emit in stream for immediate UI update
+          if (isFirstMessage && !chat.title && displayContent) {
+            const title = await Promise.race([
+              generateChatTitle(displayContent, project.path),
+              new Promise<null>((r) => setTimeout(() => r(null), 3000)),
+            ]);
+            if (title) {
+              await db.update(schema.chats).set({ title, updatedAt: new Date() }).where(eq(schema.chats.id, chatId));
+              safeEnqueue(new TextEncoder().encode(JSON.stringify({ type: "title", title }) + "\n"));
+            }
           }
         } catch (e) {
           const err = e as { code?: string };

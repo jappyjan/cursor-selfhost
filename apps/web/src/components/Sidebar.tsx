@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useParams, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Plus, ChevronRight, ChevronDown, MessageSquare, Folder } from "lucide-react";
+import { Plus, ChevronRight, ChevronDown, MessageSquare, Folder, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { fetchProjects, fetchChats, type Project, type Chat } from "@/lib/api";
 
@@ -50,6 +50,13 @@ function ProjectTreeItem({ project, search }: { project: Project; search: string
           >
             <Plus className="h-3.5 w-3.5" />
             New chat
+          </Link>
+          <Link
+            to={`/p/${project.slug}/settings`}
+            className="flex items-center gap-1.5 rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            <Settings className="h-3.5 w-3.5" />
+            Settings
           </Link>
           {chats.map((c) => (
             <ChatLink key={c.id} chat={c} projectSlug={project.slug} active={c.id === chatId} />

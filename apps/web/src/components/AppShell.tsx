@@ -24,6 +24,7 @@ export function AppShell() {
     defaultTitle = pathParts[1];
     if (pathParts[2] === "c") defaultTitle += " › Chat";
     else if (pathParts[2] === "new") defaultTitle += " › New chat";
+    else if (pathParts[2] === "settings") defaultTitle += " › Settings";
   } else if (pathParts[0] === "setup") defaultTitle = "Setup";
 
   return (

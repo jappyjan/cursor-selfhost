@@ -47,3 +47,25 @@ export const appConfig = sqliteTable("app_config", {
   key: text("key").primaryKey(),
   value: text("value").notNull(),
 });
+
+/** Per-project MCP server configuration. Stored in DB, written to .cursor/mcp.json when spawning agent. */
+export const projectMcpServers = sqliteTable("project_mcp_servers", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id")
+    .notNull()
+    .references(() => projects.id, { onDelete: "cascade" }),
+  /** Display name (e.g. "filesystem", "github") */
+  name: text("name").notNull(),
+  /** Command to run (e.g. "npx", "node") */
+  command: text("command").notNull(),
+  /** JSON array of args (e.g. ["-y", "@modelcontextprotocol/server-filesystem"]) */
+  args: text("args").notNull(),
+  /** JSON object of env vars for auth (e.g. {"API_KEY": "xxx"}). Stored as-is; consider encryption for sensitive deployments. */
+  env: text("env"),
+  /** Whether this server is enabled for the project */
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  /** Order for display/merge */
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+});

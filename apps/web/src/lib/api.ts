@@ -46,6 +46,19 @@ export type Message = {
 
 export type CursorStatus = { ok: boolean; error?: string };
 
+export type McpServer = {
+  id: string;
+  projectId: string;
+  name: string;
+  command: string;
+  args: string;
+  env: string | null;
+  enabled: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export async function fetchConfig(): Promise<ApiConfig> {
   const res = await fetch(`${API_BASE}/config`);
   if (!res.ok) throw new Error("Failed to fetch config");
@@ -86,6 +99,55 @@ export async function fetchCursorStatus(): Promise<CursorStatus> {
   const res = await fetch(`${API_BASE}/cursor/status`);
   if (!res.ok) throw new Error("Failed to fetch cursor status");
   return res.json();
+}
+
+export async function fetchMcpServers(projectId: string): Promise<McpServer[]> {
+  const res = await fetch(`${API_BASE}/projects/${projectId}/mcp-servers`);
+  if (!res.ok) throw new Error("Failed to fetch MCP servers");
+  return res.json();
+}
+
+export async function createMcpServer(
+  projectId: string,
+  body: { name: string; command: string; args: string[]; env?: Record<string, string>; enabled?: boolean }
+): Promise<McpServer> {
+  const res = await fetch(`${API_BASE}/projects/${projectId}/mcp-servers`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { error?: string }).error ?? "Failed to create MCP server");
+  }
+  return res.json();
+}
+
+export async function updateMcpServer(
+  projectId: string,
+  serverId: string,
+  body: { name?: string; command?: string; args?: string[]; env?: Record<string, string>; enabled?: boolean }
+): Promise<McpServer> {
+  const res = await fetch(`${API_BASE}/projects/${projectId}/mcp-servers/${serverId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { error?: string }).error ?? "Failed to update MCP server");
+  }
+  return res.json();
+}
+
+export async function deleteMcpServer(projectId: string, serverId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/projects/${projectId}/mcp-servers/${serverId}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { error?: string }).error ?? "Failed to delete MCP server");
+  }
 }
 
 export async function createChat(projectId: string): Promise<Chat> {
@@ -186,6 +248,7 @@ export type StreamChunk =
   | { type: "chunk"; content: string }
   | { type: "activity"; kind: string; label: string; details?: string; toolName?: string; args?: Record<string, string>; output?: string }
   | { type: "done"; sessionId: string | null }
+  | { type: "title"; title: string }
   | { type: "error"; error: string };
 
 export async function uploadImages(chatId: string, files: File[]): Promise<{ paths: string[] }> {
@@ -218,6 +281,7 @@ export async function sendMessageStreaming(
     args?: Record<string, string>;
     output?: string;
     sessionId?: string | null;
+    title?: string;
     error?: string;
     block?: MessageBlock;
   };
@@ -248,6 +312,7 @@ export async function sendMessageStreaming(
         else if (parsed.type === "chunk") onChunk({ type: "chunk", content: parsed.content ?? "" });
         else if (parsed.type === "activity") onChunk({ type: "activity", kind: parsed.kind ?? "", label: parsed.label ?? "", ...(parsed.details && { details: parsed.details }), ...(parsed.toolName && { toolName: parsed.toolName }), ...(parsed.args && { args: parsed.args }), ...(parsed.output && { output: parsed.output }) });
         else if (parsed.type === "done") onChunk({ type: "done", sessionId: parsed.sessionId ?? null });
+        else if (parsed.type === "title" && parsed.title) onChunk({ type: "title", title: parsed.title });
         else if (parsed.type === "error") onChunk({ type: "error", error: parsed.error ?? "" });
       } catch (e) {
         console.warn("[sendMessageStreaming] Malformed NDJSON line:", line?.slice(0, 100), e);
@@ -261,6 +326,7 @@ export async function sendMessageStreaming(
       else if (parsed.type === "chunk") onChunk({ type: "chunk", content: parsed.content ?? "" });
       else if (parsed.type === "activity") onChunk({ type: "activity", kind: parsed.kind ?? "", label: parsed.label ?? "", ...(parsed.details && { details: parsed.details }), ...(parsed.toolName && { toolName: parsed.toolName }), ...(parsed.args && { args: parsed.args }) });
       else if (parsed.type === "done") onChunk({ type: "done", sessionId: parsed.sessionId ?? null });
+      else if (parsed.type === "title" && parsed.title) onChunk({ type: "title", title: parsed.title });
       else if (parsed.type === "error") onChunk({ type: "error", error: parsed.error ?? "" });
     } catch (e) {
       console.warn("[sendMessageStreaming] Malformed NDJSON buffer:", buffer?.slice(0, 100), e);

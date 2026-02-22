@@ -107,4 +107,46 @@ describe("ChatView per-chat loading state", () => {
       expect(screen.getByRole("button", { name: /Sending/i })).toBeInTheDocument();
     });
   });
+
+  it("invalidates chat and chats queries when title chunk received", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+    let onChunk: ((chunk: { type: string; title?: string }) => void) | null = null;
+    vi.mocked(api.sendMessageStreaming).mockImplementation((_chatId, _content, cb) => {
+      onChunk = cb;
+      return Promise.resolve();
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <HeaderProvider>
+          <MemoryRouter initialEntries={["/p/proj/c/chat-1"]}>
+            <Routes>
+              <Route path="p/:slug/c/:chatId" element={<ChatView />} />
+            </Routes>
+          </MemoryRouter>
+        </HeaderProvider>
+      </QueryClientProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText(/Send a message/)).toBeInTheDocument();
+    });
+
+    const input = screen.getByPlaceholderText(/Send a message/);
+    fireEvent.change(input, { target: { value: "Hello" } });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: false });
+
+    await waitFor(() => {
+      expect(onChunk).toBeTruthy();
+    });
+
+    onChunk!({ type: "title", title: "Fix auth bug" });
+
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["chat", "chat-1"] });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["chats"] });
+  });
 });

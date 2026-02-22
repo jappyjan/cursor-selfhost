@@ -115,6 +115,7 @@ type StreamChunk = {
   content?: string;
   error?: string;
   sessionId?: string | null;
+  title?: string;
   kind?: string;
   label?: string;
   details?: string;
@@ -310,6 +311,28 @@ describe("Message streaming (mock CLI)", () => {
     expect(toolActivity?.details).toBeDefined();
     expect(texts.length).toBeGreaterThan(0);
     expect(texts[0].content).toContain("[ASSISTANT_REPLY]");
+  });
+
+  it.skipIf(!useMockCli)("generates chat title from first message and emits in stream", async () => {
+    const { chatId } = await setupProjectAndChat();
+    const res = await fetch(`/api/chats/${chatId}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "Fix the authentication bug in login.ts" }),
+    });
+    expect(res.status).toBe(200);
+
+    let streamTitle: string | null = null;
+    await consumeStream(res, (obj) => {
+      if (obj.type === "title" && obj.title) streamTitle = obj.title;
+    });
+
+    await waitForPersist(3500);
+
+    const chatRes = await fetch(`/api/chats/${chatId}`);
+    const chat = await chatRes.json();
+    expect(chat.title).toBe("Fix auth bug");
+    expect(streamTitle).toBe("Fix auth bug");
   });
 
   it.skipIf(!useMockCli)("persists only assistant content to DB, not user/tool mix", async () => {

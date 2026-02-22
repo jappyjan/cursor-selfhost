@@ -21,6 +21,7 @@ import {
   createCursorSession,
   spawnCursorAgent,
   buildAgentStdin,
+  generateChatTitle,
 } from "./cursor-cli";
 
 describe("parseCursorLine", () => {
@@ -402,6 +403,54 @@ describe("createCursorSession", () => {
     });
 
     await expect(createCursorSession("/tmp")).rejects.toThrow();
+  });
+});
+
+describe("generateChatTitle", () => {
+  beforeEach(() => {
+    mockSpawn.mockReset();
+  });
+
+  it("returns title from assistant/result content", async () => {
+    mockSpawn.mockImplementation(() => {
+      const proc = {
+        stdin: { write: vi.fn(), end: vi.fn() },
+        stdout: {
+          on: vi.fn((_ev: string, cb: (chunk: Buffer) => void) => {
+            const ndjson = '{"type":"assistant","message":{"content":[{"type":"text","text":"Fix auth bug"}]}}\n';
+            setTimeout(() => cb(Buffer.from(ndjson)), 0);
+            return proc;
+          }),
+        },
+        stderr: { on: vi.fn() },
+        on: vi.fn((ev: string, cb: (code?: number) => void) => {
+          if (ev === "close") setTimeout(() => cb(0), 10);
+          return proc;
+        }),
+      };
+      return proc;
+    });
+
+    const title = await generateChatTitle("Fix the authentication bug in login.ts", "/tmp/proj");
+    expect(title).toBe("Fix auth bug");
+  });
+
+  it("returns null when response is empty", async () => {
+    mockSpawn.mockImplementation(() => {
+      const proc = {
+        stdin: { write: vi.fn(), end: vi.fn() },
+        stdout: { on: vi.fn() },
+        stderr: { on: vi.fn() },
+        on: vi.fn((ev: string, cb: (code?: number) => void) => {
+          if (ev === "close") setTimeout(() => cb(0), 0);
+          return proc;
+        }),
+      };
+      return proc;
+    });
+
+    const title = await generateChatTitle("hello", "/tmp");
+    expect(title).toBeNull();
   });
 });
 

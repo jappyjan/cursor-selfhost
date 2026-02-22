@@ -165,6 +165,10 @@ export function ChatView() {
           ]);
         }
         if (chunk.type === "error") setSendError(chunk.error);
+        if (chunk.type === "title") {
+          queryClient.invalidateQueries({ queryKey: ["chat", targetChatId] });
+          queryClient.invalidateQueries({ queryKey: ["chats"] });
+        }
       }, imagePaths);
     },
     onSuccess: async (_data, { targetChatId }) => {
@@ -175,6 +179,11 @@ export function ChatView() {
         queryClient.invalidateQueries({ queryKey: ["chats"] }),
       ]);
       setStreamingBlocks([]);
+      // Refetch chat after a delay to pick up AI-generated title (generated async)
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ["chat", targetChatId] });
+        queryClient.invalidateQueries({ queryKey: ["chats"] });
+      }, 5000);
     },
     onError: (err) => {
       lastSentImageUrlsRef.current = [];

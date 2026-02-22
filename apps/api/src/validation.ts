@@ -33,3 +33,12 @@ export function isValidGitUrl(url: string): boolean {
   if (trimmed.includes(" ") || trimmed.includes("\n") || trimmed.startsWith("-")) return false;
   return GIT_URL_REGEX.test(trimmed);
 }
+
+/** MCP server config for create/update */
+export const mcpServerSchema = z.object({
+  name: z.string().min(1).max(100),
+  command: z.string().min(1).max(500),
+  args: z.array(z.string()).max(50),
+  env: z.record(z.string(), z.string()).optional(),
+  enabled: z.boolean().optional(),
+});

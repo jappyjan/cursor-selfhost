@@ -124,4 +124,4 @@ cursor-selfhost/
 
 - [x] Deno + Drizzle + libsql: libsql file: not supported in Deno; switched to Node + better-sqlite3
 - [x] Monorepo: Unified pnpm-workspace; API uses Node
-- [ ] Chat title generation: Use Cursor CLI with "summarize" prompt, or separate lightweight model?
+- [x] Chat title generation: Use Cursor CLI with a "summarize as title" prompt on the first user message; `generateChatTitle()` spawns a one-off CLI call; title emitted in stream (or fallback: frontend refetches after 5s)

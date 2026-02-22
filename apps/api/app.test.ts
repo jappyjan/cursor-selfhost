@@ -200,6 +200,81 @@ describe("API", () => {
     });
   });
 
+  describe("Project MCP servers", () => {
+    let projectId: string;
+
+    beforeAll(async () => {
+      await fetch("/api/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectsBasePath: "/tmp" }),
+      });
+      const projectsRes = await fetch("/api/projects");
+      const projects = await projectsRes.json();
+      projectId = projects[0]?.id ?? "";
+    });
+
+    it("GET /api/projects/:id/mcp-servers returns empty list", async () => {
+      const res = await fetch(`/api/projects/${projectId}/mcp-servers`);
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(Array.isArray(json)).toBe(true);
+      expect(json.length).toBe(0);
+    });
+
+    it("POST /api/projects/:id/mcp-servers creates server", async () => {
+      const res = await fetch(`/api/projects/${projectId}/mcp-servers`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "filesystem",
+          command: "npx",
+          args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+          env: { ALLOWED_DIRS: "/tmp" },
+          enabled: true,
+        }),
+      });
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.name).toBe("filesystem");
+      expect(json.command).toBe("npx");
+      expect(json.enabled).toBe(true);
+      expect(json.projectId).toBe(projectId);
+    });
+
+    it("PATCH /api/projects/:id/mcp-servers/:serverId updates server", async () => {
+      const listRes = await fetch(`/api/projects/${projectId}/mcp-servers`);
+      const list = await listRes.json();
+      const serverId = list[0].id;
+      const res = await fetch(`/api/projects/${projectId}/mcp-servers/${serverId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: false }),
+      });
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.enabled).toBe(false);
+    });
+
+    it("DELETE /api/projects/:id/mcp-servers/:serverId removes server", async () => {
+      const listRes = await fetch(`/api/projects/${projectId}/mcp-servers`);
+      const list = await listRes.json();
+      const serverId = list[0].id;
+      const res = await fetch(`/api/projects/${projectId}/mcp-servers/${serverId}`, {
+        method: "DELETE",
+      });
+      expect(res.status).toBe(200);
+      const getRes = await fetch(`/api/projects/${projectId}/mcp-servers`);
+      const after = await getRes.json();
+      expect(after.length).toBe(0);
+    });
+
+    it("GET /api/projects/:id/mcp-servers returns 404 for unknown project", async () => {
+      const res = await fetch("/api/projects/unknown-id/mcp-servers");
+      expect(res.status).toBe(404);
+    });
+  });
+
   describe("Chats CRUD", () => {
     let projectId: string;
 
@@ -264,6 +339,95 @@ describe("API", () => {
     it("DELETE /api/chats/:id returns 404 for unknown chat", async () => {
       const res = await fetch("/api/chats/unknown-chat-id", { method: "DELETE" });
       expect(res.status).toBe(404);
+    });
+  });
+
+  describe("Chat title generation", () => {
+    it("generates and persists title from first message, emits title in stream", async () => {
+      const projectsRes = await fetch("/api/projects");
+      const projects = await projectsRes.json();
+      const projectId = projects[0]?.id;
+      const chatRes = await fetch(`/api/projects/${projectId}/chats`, { method: "POST" });
+      const chat = await chatRes.json();
+      const chatId = chat.id;
+      expect(chat.title).toBeNull();
+
+      const res = await fetch(`/api/chats/${chatId}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: "Fix the authentication bug in login.ts" }),
+      });
+      expect(res.status).toBe(200);
+
+      const chunks: { type: string; title?: string }[] = [];
+      const reader = res.body?.getReader();
+      if (reader) {
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            try {
+              const parsed = JSON.parse(line);
+              if (parsed.type === "title") chunks.push(parsed);
+            } catch {
+              /* skip */
+            }
+          }
+        }
+        if (buffer.trim()) {
+          try {
+            const parsed = JSON.parse(buffer);
+            if (parsed.type === "title") chunks.push(parsed);
+          } catch {
+            /* skip */
+          }
+        }
+      }
+
+      await new Promise((r) => setTimeout(r, 3500));
+
+      const chatAfter = await fetch(`/api/chats/${chatId}`).then((r) => r.json());
+      expect(chatAfter.title).toBe("Fix auth bug");
+      expect(chunks.some((c) => c.type === "title" && c.title === "Fix auth bug")).toBe(true);
+    });
+
+    it("does not regenerate title for second message", async () => {
+      const projectsRes = await fetch("/api/projects");
+      const projects = await projectsRes.json();
+      const projectId = projects[0]?.id;
+      const chatRes = await fetch(`/api/projects/${projectId}/chats`, { method: "POST" });
+      const chat = await chatRes.json();
+      const chatId = chat.id;
+
+      const res1 = await fetch(`/api/chats/${chatId}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: "First message" }),
+      });
+      const reader1 = res1.body?.getReader();
+      if (reader1) while (true) { const { done } = await reader1.read(); if (done) break; }
+      await new Promise((r) => setTimeout(r, 3500));
+
+      const chatAfterFirst = await fetch(`/api/chats/${chatId}`).then((r) => r.json());
+      const titleAfterFirst = chatAfterFirst.title;
+
+      const res2 = await fetch(`/api/chats/${chatId}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: "Second message" }),
+      });
+      const reader2 = res2.body?.getReader();
+      if (reader2) while (true) { const { done } = await reader2.read(); if (done) break; }
+      await new Promise((r) => setTimeout(r, 500));
+
+      const chatAfterSecond = await fetch(`/api/chats/${chatId}`).then((r) => r.json());
+      expect(chatAfterSecond.title).toBe(titleAfterFirst);
     });
   });
 

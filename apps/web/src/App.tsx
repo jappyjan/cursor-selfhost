@@ -4,6 +4,7 @@ import { AppShell } from "@/components/AppShell";
 import { Home } from "@/pages/Home";
 import { Setup } from "@/pages/Setup";
 import { ProjectView } from "@/pages/ProjectView";
+import { ProjectSettings } from "@/pages/ProjectSettings";
 import { ChatView } from "@/pages/ChatView";
 import NewChatView from "@/pages/NewChatView";
 import { CreateProject } from "@/pages/CreateProject";
@@ -68,6 +69,7 @@ function App() {
               <Route path="setup" element={<Setup />} />
               <Route path="create" element={<CreateProject />} />
               <Route path="p/:slug" element={<ProjectView />} />
+              <Route path="p/:slug/settings" element={<ProjectSettings />} />
               <Route path="p/:slug/c/:chatId" element={<ChatRoute />} />
               <Route path="p/:slug/new" element={<NewChatView />} />
               <Route path="*" element={<Navigate to="/" replace />} />

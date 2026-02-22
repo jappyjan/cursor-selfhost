@@ -34,6 +34,7 @@ function main() {
   });
   process.stdin.on("end", () => {
     const userPrompt = input.trim() || "(empty)";
+    const isTitleRequest = /Summarize the following.*as a chat title/i.test(userPrompt);
 
     // 1. System init with session_id
     process.stdout.write(ndjson({ type: "system", subtype: "init", session_id: sessionId }));
@@ -69,8 +70,8 @@ function main() {
       })
     );
 
-    // 5. First assistant text chunk
-    const part1 = `[ASSISTANT_REPLY] First part. `;
+    // 5. First assistant text chunk (or short title for title-generation requests)
+    const part1 = isTitleRequest ? "Fix auth bug" : `[ASSISTANT_REPLY] First part. `;
     process.stdout.write(
       ndjson({
         type: "assistant",
@@ -118,8 +119,8 @@ function main() {
       })
     );
 
-    // 8. Second assistant text chunk
-    const part2 = `Second part. Response to your message.`;
+    // 8. Second assistant text chunk (skip for title request — we want only the title)
+    const part2 = isTitleRequest ? "" : `Second part. Response to your message.`;
     process.stdout.write(
       ndjson({
         type: "assistant",
@@ -129,8 +130,9 @@ function main() {
     );
 
     // 9. Final result (do NOT stream — duplicates assistant content; use only for done/session_id)
+    const fullResult = part1 + part2;
     process.stdout.write(
-      ndjson({ type: "result", result: part1 + part2, session_id: sessionId })
+      ndjson({ type: "result", result: fullResult, session_id: sessionId })
     );
 
     process.exit(0);
