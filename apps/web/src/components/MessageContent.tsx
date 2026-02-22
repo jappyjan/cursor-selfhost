@@ -1,3 +1,4 @@
+import { memo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { CodeBlock } from "./CodeBlock";
@@ -63,7 +64,7 @@ interface MessageContentProps {
   isStreaming?: boolean;
 }
 
-export function MessageContent({ content, className, isStreaming }: MessageContentProps) {
+export const MessageContent = memo(function MessageContent({ content, className, isStreaming }: MessageContentProps) {
   const hasTrailingNewlines = isStreaming && content.length > 0 && /\n+$/.test(content);
   const trimmed = isStreaming ? trimAgentContentStreaming(content) : trimAgentContent(content);
   const parts = parseContent(trimmed);
@@ -134,4 +135,4 @@ export function MessageContent({ content, className, isStreaming }: MessageConte
       )}
     </div>
   );
-}
+});

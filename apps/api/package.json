@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "pnpm exec tsx watch main.ts",
     "start": "pnpm exec tsx main.ts",
-    "test": "vitest run"
+    "test": "vitest run",
+    "dump:cli": "node scripts/dump-cursor-cli-output.js",
+    "test:e2e": "RUN_E2E_WITH_REAL_CURSOR=1 vitest run",
+    "test:e2e:dump": "RUN_E2E_WITH_REAL_CURSOR=1 DUMP_E2E_TOOL_CALLS=1 vitest run integration.test"
   },
   "dependencies": {
     "@cursor-selfhost/db": "workspace:*",

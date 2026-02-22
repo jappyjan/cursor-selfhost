@@ -21,7 +21,7 @@ type ContentItem =
   | { type: "function"; name?: string; arguments?: string }
   | { type: "tool_use"; name?: string; input?: unknown };
 
-/** Cursor CLI tool_call.tool_call keys → display names (from actual CLI output). */
+/** Cursor CLI tool_call.tool_call keys → internal tool names. */
 const CURSOR_CLI_TOOL_KEYS: Record<string, string> = {
   shellToolCall: "run_terminal_cmd",
   readToolCall: "read_file",
@@ -37,6 +37,22 @@ const CURSOR_CLI_TOOL_KEYS: Record<string, string> = {
   fetchUrlToolCall: "fetch_url",
 };
 
+/** Short display labels for UI (no "Tool: " prefix). */
+const TOOL_DISPLAY_LABELS: Record<string, string> = {
+  run_terminal_cmd: "Terminal",
+  read_file: "Read file",
+  edit: "Edit",
+  search_replace: "Edit",
+  write: "Write",
+  list_dir: "List directory",
+  grep: "Grep",
+  glob_file_search: "Glob search",
+  delete_file: "Delete file",
+  apply_patch: "Patch",
+  web_search: "Web search",
+  fetch_url: "Fetch URL",
+};
+
 /** Derive display name from unknown tool key (e.g. "fooBarToolCall" → "foo_bar"). */
 function toolKeyToDisplayName(key: string): string {
   const known = CURSOR_CLI_TOOL_KEYS[key];
@@ -50,6 +66,7 @@ function toolKeyToDisplayName(key: string): string {
 
 export interface CursorLine {
   type: string;
+  subtype?: string;
   result?: string;
   session_id?: string;
   message?: { content?: ContentItem[] };
@@ -214,9 +231,12 @@ export const ACTIVITY_TYPES = new Set(["tool_call", "tool_result", "thinking"]);
 
 /**
  * Returns true if this line is an activity we should emit for the UI.
+ * For tool_call: only emit "started" (real CLI sends started + completed; we want one block per call).
  */
 export function isActivityContent(line: CursorLine): boolean {
-  return !!(line.type && ACTIVITY_TYPES.has(line.type));
+  if (!line.type || !ACTIVITY_TYPES.has(line.type)) return false;
+  if (line.type === "tool_call" && line.subtype === "completed") return false;
+  return true;
 }
 
 /** Parsed tool call: name + key=value args. */
@@ -294,6 +314,22 @@ function flattenArgs(obj: Record<string, unknown>): Record<string, string> {
   return out;
 }
 
+/** Normalize camelCase to snake_case for known edit tool args (Cursor CLI may use either). */
+function normalizeEditArgs(args: Record<string, string>): Record<string, string> {
+  const aliases: [string, string][] = [
+    ["oldString", "old_string"],
+    ["newString", "new_string"],
+    ["filePath", "file_path"],
+  ];
+  const out = { ...args };
+  for (const [from, to] of aliases) {
+    if (out[from] !== undefined && out[to] === undefined) {
+      out[to] = out[from];
+    }
+  }
+  return out;
+}
+
 /**
  * Extract tool name and args from structured content (OpenAI function / Anthropic tool_use).
  */
@@ -351,38 +387,80 @@ function parseJsonArgs(val: unknown): Record<string, string> | null {
   return null;
 }
 
+const EDIT_TOOLS = new Set(["search_replace", "edit", "write", "apply_patch"]);
+const SHELL_TOOLS = new Set(["run_terminal_cmd"]);
+const TOOLS_WITH_ARGS = new Set([...EDIT_TOOLS, ...SHELL_TOOLS]);
+
+/** Extract output from tool_result (Cursor CLI may put it in result, output, or message.content). */
+function extractToolResultOutput(line: CursorLine): string | undefined {
+  if (line.type !== "tool_result") return undefined;
+  const top = line as { result?: string; output?: string; stdout?: string; stderr?: string };
+  if (top.result) return top.result;
+  if (top.output) return top.output;
+  if (top.stdout !== undefined) {
+    const stderr = top.stderr ? `\n${top.stderr}` : "";
+    return top.stdout + stderr;
+  }
+  return extractTextFromLine(line) || undefined;
+}
+
 /**
- * Extract activity info: label (always includes tool name) and optional details.
- * Supports: Cursor CLI tool_call.*, [Tool: name args...] text, OpenAI function/tool_use.
+ * Extract activity info: label (always includes tool name), optional details, args for edit/shell tools, and output for tool_result.
+ * Supports: Cursor CLI tool_call.*, tool_result.*, [Tool: name args...] text, OpenAI function/tool_use.
  */
-export function extractActivityInfo(line: CursorLine): { label: string; details?: string } {
+export function extractActivityInfo(line: CursorLine): {
+  label: string;
+  details?: string;
+  toolName?: string;
+  args?: Record<string, string>;
+  output?: string;
+} {
   if (line.type === "thinking") return { label: "Thinking…" };
+  const output = extractToolResultOutput(line);
   // 1. Cursor CLI format: tool_call = { shellToolCall: { args }, readToolCall: { args }, ... }
   const cliParsed = extractCursorCliToolCall(line);
   if (cliParsed) {
-    const label = `Tool: ${cliParsed.toolName}`;
+    const label = TOOL_DISPLAY_LABELS[cliParsed.toolName] ?? cliParsed.toolName;
     const details = formatToolDetails(cliParsed.toolName, cliParsed.args);
-    return { label, details };
+    const out: { label: string; details?: string; toolName?: string; args?: Record<string, string>; output?: string } = { label, details };
+    if (TOOLS_WITH_ARGS.has(cliParsed.toolName)) {
+      out.toolName = cliParsed.toolName;
+      out.args = normalizeEditArgs(cliParsed.args);
+    }
+    if (output) out.output = output;
+    return out;
   }
   // 2. OpenAI/Anthropic structured (function/tool_use)
   const structured = extractStructuredToolCall(line);
   if (structured) {
-    const label = `Tool: ${structured.toolName}`;
+    const label = TOOL_DISPLAY_LABELS[structured.toolName] ?? structured.toolName;
     const details = formatToolDetails(structured.toolName, structured.args);
-    return { label, details };
+    const out: { label: string; details?: string; toolName?: string; args?: Record<string, string>; output?: string } = { label, details };
+    if (TOOLS_WITH_ARGS.has(structured.toolName)) {
+      out.toolName = structured.toolName;
+      out.args = normalizeEditArgs(structured.args);
+    }
+    if (output) out.output = output;
+    return out;
   }
   // 3. [Tool: name args...] text format (mock)
   const text = extractTextFromLine(line);
   if (text) {
     const parsed = parseToolCall(text);
     if (parsed) {
-      const label = `Tool: ${parsed.toolName}`;
+      const label = TOOL_DISPLAY_LABELS[parsed.toolName] ?? parsed.toolName;
       const details = formatToolDetails(parsed.toolName, parsed.args);
-      return { label, details };
+      const out: { label: string; details?: string; toolName?: string; args?: Record<string, string>; output?: string } = { label, details };
+      if (TOOLS_WITH_ARGS.has(parsed.toolName)) {
+        out.toolName = parsed.toolName;
+        out.args = normalizeEditArgs(parsed.args);
+      }
+      if (output) out.output = output;
+      return out;
     }
-    return { label: text.slice(0, 60) + (text.length > 60 ? "…" : "") };
+    return { label: text.slice(0, 60) + (text.length > 60 ? "…" : ""), ...(output && { output }) };
   }
-  return { label: line.type ?? "Activity" };
+  return { label: line.type ?? "Activity", ...(output && { output }) };
 }
 
 /**

@@ -72,6 +72,10 @@ pnpm --filter db test   # DB package only
 4. **Cursor CLI**: Unit tests in `apps/api/src/cursor-cli.test.ts` mock `child_process.spawn`. Integration tests in `integration.test.ts` use `scripts/mock-cursor-agent.js` (set via `CURSOR_CLI_PATH` in test-setup) to verify streaming and chat isolation without the real agent.
 5. **E2E with real Cursor**: Run `pnpm test:e2e` to use the real Cursor CLI. Requires `cursor agent login` and `cursor agent status` to succeed.
 
+6. **E2E diff view diagnostics**: Run `pnpm --filter api test:e2e:dump` to run E2E tests and dump captured tool call blocks to `e2e-tool-calls-dump.json` for debugging diff view parsing.
+
+7. **Raw Cursor CLI dump**: Run `pnpm --filter api dump:cli [output.jsonl]` to capture raw NDJSON from the Cursor CLI (prompt triggers file edit). Inspect the output to verify tool_call format for diff views.
+
 ---
 
 ## Changelog

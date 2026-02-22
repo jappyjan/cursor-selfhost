@@ -110,19 +110,30 @@ async function waitForPersist(ms = 200) {
   await new Promise((r) => setTimeout(r, ms));
 }
 
-async function consumeStream(
-  res: Response,
-  onChunk: (obj: {
+type StreamChunk = {
+  type: string;
+  content?: string;
+  error?: string;
+  sessionId?: string | null;
+  kind?: string;
+  label?: string;
+  details?: string;
+  toolName?: string;
+  args?: Record<string, string>;
+  output?: string;
+  block?: {
     type: string;
     content?: string;
-    error?: string;
-    sessionId?: string | null;
     kind?: string;
     label?: string;
     details?: string;
-    block?: { type: string; content?: string; kind?: string; label?: string; details?: string };
-  }) => void
-): Promise<void> {
+    toolName?: string;
+    args?: Record<string, string>;
+    output?: string;
+  };
+};
+
+async function consumeStream(res: Response, onChunk: (obj: StreamChunk) => void): Promise<void> {
   const reader = res.body?.getReader();
   if (!reader) throw new Error("No body");
   const decoder = new TextDecoder();
@@ -234,7 +245,7 @@ describe("Message streaming (mock CLI)", () => {
 
     expect(activities.some((a) => a.kind === "thinking")).toBe(true);
     expect(activities.some((a) => a.kind === "tool_call")).toBe(true);
-    expect(activities.some((a) => a.label.includes("read_file"))).toBe(true);
+    expect(activities.some((a) => a.label === "Read file" || a.label.includes("read_file"))).toBe(true);
   });
 
   it.skipIf(!useMockCli)("emits tool call details (path, file) for richer display", async () => {
@@ -256,12 +267,12 @@ describe("Message streaming (mock CLI)", () => {
         });
     });
 
-    const readFile = activities.find((a) => a.label.includes("read_file"));
+    const readFile = activities.find((a) => a.label === "Read file" || a.label.includes("read_file"));
     expect(readFile).toBeDefined();
     expect(readFile?.details).toContain("path:");
     expect(readFile?.details).toContain("/tmp/foo.ts");
 
-    const searchReplace = activities.find((a) => a.label.includes("search_replace"));
+    const searchReplace = activities.find((a) => a.label === "Edit" || a.label.includes("search_replace"));
     expect(searchReplace).toBeDefined();
     expect(searchReplace?.details).toContain("path:");
     expect(searchReplace?.details).toContain("src/index.ts");
@@ -665,11 +676,81 @@ describe("E2E with real Cursor CLI", () => {
       });
       const toolCalls = activities.filter((a) => a.kind === "tool_call");
       expect(toolCalls.length).toBeGreaterThan(0);
-      const withLabel = toolCalls.find((a) => a.label.startsWith("Tool: ") && a.label !== "Tool: tool_call");
+      const withLabel = toolCalls.find((a) => a.label && a.label.length > 0 && a.label !== "tool_call");
       expect(withLabel).toBeDefined();
       expect(withLabel!.label).not.toBe("tool_call");
       const withDetails = toolCalls.find((a) => a.details && a.details.length > 0);
       expect(withDetails).toBeDefined();
+    });
+
+    runE2E("captures edit tool args for diff view (path, old_string, new_string)", {
+      timeout: E2E_TIMEOUT * 2,
+    }, async () => {
+      await requireCursorAuth()();
+      const { projectId } = await setupE2EProject();
+      const { chatId } = await createChat(projectId);
+
+      const res = await fetch(`/api/chats/${chatId}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          content: "Create a file named E2E_DIFF_TEST.txt with exactly the content 'before'. Then change 'before' to 'after' in that file. Reply with Done when finished.",
+        }),
+      });
+      expect(res.status).toBe(200);
+
+      const editActivities: Array<{ kind: string; label: string; toolName?: string; args?: Record<string, string>; details?: string }> = [];
+      await consumeStream(res, (obj) => {
+        if (obj.type === "block" && obj.block?.type === "activity") {
+          const b = obj.block as { kind?: string; label?: string; toolName?: string; args?: Record<string, string>; details?: string };
+          editActivities.push({
+            kind: b.kind ?? "",
+            label: b.label ?? "",
+            toolName: b.toolName,
+            args: b.args,
+            details: b.details,
+          });
+        }
+      });
+
+      if (process.env.DUMP_E2E_TOOL_CALLS) {
+        const { writeFileSync } = await import("fs");
+        writeFileSync(
+          "e2e-tool-calls-dump.json",
+          JSON.stringify(editActivities, null, 2),
+          "utf-8"
+        );
+        console.error("Dumped", editActivities.length, "activities to e2e-tool-calls-dump.json");
+      }
+
+      const editTools = editActivities.filter(
+        (a) =>
+          a.toolName === "search_replace" ||
+          a.toolName === "edit" ||
+          a.toolName === "write" ||
+          a.toolName === "apply_patch"
+      );
+      expect(editTools.length).toBeGreaterThan(0);
+
+      const withArgs = editTools.find((a) => a.args && Object.keys(a.args).length > 0);
+      expect(withArgs).toBeDefined();
+      expect(withArgs!.args).toBeDefined();
+
+      const args = withArgs!.args!;
+      const path = args.path ?? args.file_path ?? args.filePath;
+      expect(path).toBeDefined();
+      expect(typeof path).toBe("string");
+
+      const hasEditContent =
+        args.old_string !== undefined ||
+        args.oldString !== undefined ||
+        args.new_string !== undefined ||
+        args.newString !== undefined ||
+        args.streamContent !== undefined ||
+        args.diff !== undefined ||
+        args.patch !== undefined ||
+        args.content !== undefined;
+      expect(hasEditContent).toBe(true);
     });
 
     runE2E("persists tool call details to DB (GET messages returns blocks with details)", {

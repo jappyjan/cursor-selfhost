@@ -79,7 +79,33 @@ function main() {
       })
     );
 
-    // 6. Another tool call — real Cursor CLI format (tool_call.searchReplaceToolCall)
+    // 6. Tool call — run_terminal_cmd (shellToolCall)
+    process.stdout.write(
+      ndjson({
+        type: "tool_call",
+        subtype: "started",
+        call_id: "mock-shell-1",
+        tool_call: {
+          shellToolCall: { args: { command: "npm run build", workingDirectory: "/tmp/proj" } },
+        },
+        session_id: sessionId,
+      })
+    );
+
+    // 6b. Tool result — run_terminal_cmd output
+    process.stdout.write(
+      ndjson({
+        type: "tool_result",
+        call_id: "mock-shell-1",
+        tool_call: {
+          shellToolCall: { args: { command: "npm run build", workingDirectory: "/tmp/proj" } },
+        },
+        result: "> proj@1.0.0 build\n> tsc\n✓ Build completed successfully",
+        session_id: sessionId,
+      })
+    );
+
+    // 7. Another tool call — real Cursor CLI format (tool_call.searchReplaceToolCall)
     process.stdout.write(
       ndjson({
         type: "tool_call",
@@ -92,7 +118,7 @@ function main() {
       })
     );
 
-    // 7. Second assistant text chunk
+    // 8. Second assistant text chunk
     const part2 = `Second part. Response to your message.`;
     process.stdout.write(
       ndjson({
@@ -102,7 +128,7 @@ function main() {
       })
     );
 
-    // 8. Final result (do NOT stream — duplicates assistant content; use only for done/session_id)
+    // 9. Final result (do NOT stream — duplicates assistant content; use only for done/session_id)
     process.stdout.write(
       ndjson({ type: "result", result: part1 + part2, session_id: sessionId })
     );

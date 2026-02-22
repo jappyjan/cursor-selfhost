@@ -13,6 +13,8 @@ import {
   type MessageBlock,
 } from "@/lib/api";
 import { MessageContent, TypingIndicator } from "@/components/MessageContent";
+import { ToolCallDisplay } from "@/components/ToolCallDisplay";
+import { ChatInputArea } from "@/components/ChatInputArea";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -37,15 +39,13 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import {
   User,
   Bot,
   MoreVertical,
-  Send,
-  Loader2,
   AlertCircle,
   RefreshCw,
+  ChevronDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -54,7 +54,6 @@ export function ChatView() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { setTitle, setActions } = useHeader();
-  const [input, setInput] = useState("");
   const [streamingBlocks, setStreamingBlocks] = useState<MessageBlock[]>([]);
   const [sendError, setSendError] = useState<string | null>(null);
   const [renameOpen, setRenameOpen] = useState(false);
@@ -62,7 +61,33 @@ export function ChatView() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const lastSentRef = useRef<string>("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesScrollRef = useRef<HTMLDivElement>(null);
+  const userAtBottomRef = useRef(true);
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const sendingToChatIdRef = useRef<string | null>(null);
+
+  const SCROLL_THRESHOLD_PX = 120;
+
+  const checkAtBottom = useCallback((el: HTMLDivElement | null) => {
+    if (!el) return true;
+    const { scrollTop, scrollHeight, clientHeight } = el;
+    const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+    return distanceFromBottom <= SCROLL_THRESHOLD_PX;
+  }, []);
+
+  const handleMessagesScroll = useCallback(() => {
+    const el = messagesScrollRef.current;
+    if (!el) return;
+    const atBottom = checkAtBottom(el);
+    userAtBottomRef.current = atBottom;
+    setShowScrollToBottom(!atBottom);
+  }, [checkAtBottom]);
+
+  const scrollToBottom = useCallback(() => {
+    userAtBottomRef.current = true;
+    setShowScrollToBottom(false);
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, []);
 
   const { data: chat, error } = useQuery({
     queryKey: ["chat", chatId],
@@ -113,7 +138,15 @@ export function ChatView() {
         if (chunk.type === "activity") {
           setStreamingBlocks((prev) => [
             ...prev,
-            { type: "activity" as const, kind: chunk.kind, label: chunk.label, ...(chunk.details && { details: chunk.details }) },
+            {
+              type: "activity" as const,
+              kind: chunk.kind,
+              label: chunk.label,
+              ...(chunk.details && { details: chunk.details }),
+              ...(chunk.toolName && { toolName: chunk.toolName }),
+              ...(chunk.args && Object.keys(chunk.args).length > 0 && { args: chunk.args }),
+              ...(chunk.output && { output: chunk.output }),
+            },
           ]);
         }
         if (chunk.type === "error") setSendError(chunk.error);
@@ -138,23 +171,17 @@ export function ChatView() {
   const isStreaming = sendMutation.isPending;
   const isCursorLoggedIn = cursorStatus?.ok === true;
 
-  const handleSend = useCallback(() => {
-    const text = input.trim();
-    if (!text || isStreaming || !chatId) return;
-    lastSentRef.current = text;
-    sendingToChatIdRef.current = chatId;
-    sendMutation.mutate({ content: text, targetChatId: chatId });
-    setInput("");
-  }, [input, isStreaming, sendMutation, chatId]);
-
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        handleSend();
-      }
+  const handleSend = useCallback(
+    (content: string) => {
+      const text = content.trim();
+      if (!text || isStreaming || !chatId) return;
+      lastSentRef.current = text;
+      userAtBottomRef.current = true;
+      setShowScrollToBottom(false);
+      sendingToChatIdRef.current = chatId;
+      sendMutation.mutate({ content: text, targetChatId: chatId });
     },
-    [handleSend]
+    [isStreaming, sendMutation, chatId]
   );
 
   const openRenameDialog = useCallback(() => {
@@ -293,9 +320,15 @@ export function ChatView() {
 
   const collapsedItems = collapseThinkingItems(displayItems);
 
+  const lastScrollTimeRef = useRef(0);
+  const SCROLL_THROTTLE_MS = 250;
   useEffect(() => {
+    if (!userAtBottomRef.current) return;
+    const now = Date.now();
+    if (now - lastScrollTimeRef.current < SCROLL_THROTTLE_MS && isStreaming) return;
+    lastScrollTimeRef.current = now;
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length, streamingBlocks.length, isStreaming]);
+  }, [messages.length, streamingBlocks.length, streamingBlocks, isStreaming]);
 
   useEffect(() => {
     if (!chat || !project) {
@@ -338,8 +371,12 @@ export function ChatView() {
   return (
     <div className="flex h-full flex-col">
       {/* Messages area */}
-      <div className="flex-1 overflow-y-auto p-6">
-        <div className="mx-auto max-w-3xl space-y-3">
+      <div
+        ref={messagesScrollRef}
+        className="relative flex-1 overflow-y-auto p-6"
+        onScroll={handleMessagesScroll}
+      >
+        <div className="mx-auto w-full max-w-5xl space-y-3">
           {!isCursorLoggedIn && (
             <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 p-4">
               <div className="flex items-start gap-3">
@@ -412,25 +449,26 @@ export function ChatView() {
                 }
                 if (item.block.type === "activity") {
                   const pulsing = "isPulsing" in item && item.isPulsing;
-                  const tooltip = [item.block.kind, item.block.details].filter(Boolean).join(" · ");
+                  if (item.block.kind === "thinking" && pulsing) {
+                    return (
+                      <div key={`${item.messageId}-${idx}`} className="py-0">
+                        <TypingIndicator />
+                      </div>
+                    );
+                  }
                   return (
                     <div
                       key={`${item.messageId}-${idx}`}
-                      className="text-xs text-muted-foreground/80 py-0"
-                      title={tooltip}
+                      className="w-full min-w-0 overflow-hidden"
                     >
-                      {item.block.kind === "thinking" && pulsing ? (
-                        <TypingIndicator />
-                      ) : (
-                        <>
-                          {item.block.label}
-                          {item.block.details && (
-                            <span className="ml-1.5 text-muted-foreground/60 truncate max-w-[200px] inline-block align-bottom" title={item.block.details}>
-                              ({item.block.details})
-                            </span>
-                          )}
-                        </>
-                      )}
+                      <ToolCallDisplay
+                        label={item.block.label}
+                        details={item.block.details}
+                        toolName={item.block.toolName}
+                        args={item.block.args}
+                        output={item.block.output}
+                        projectPath={project?.path}
+                      />
                     </div>
                   );
                 }
@@ -463,19 +501,30 @@ export function ChatView() {
           )}
           <div ref={messagesEndRef} />
         </div>
+        {showScrollToBottom && (
+          <Button
+            variant="secondary"
+            size="sm"
+            className="absolute bottom-6 left-1/2 -translate-x-1/2 shadow-lg"
+            onClick={scrollToBottom}
+          >
+            <ChevronDown className="mr-1.5 h-4 w-4" />
+            Scroll to bottom
+          </Button>
+        )}
       </div>
 
       {/* Error block with retry */}
       {sendError && (
         <div className="shrink-0 border-t border-border bg-destructive/10 px-6 py-3">
-          <div className="mx-auto flex max-w-3xl items-center justify-between gap-4">
+          <div className="mx-auto flex max-w-5xl items-center justify-between gap-4">
             <p className="text-sm text-destructive">{sendError}</p>
             <Button
               variant="outline"
               size="sm"
               onClick={() => {
                 setSendError(null);
-                const toRetry = lastSentRef.current || input.trim();
+                const toRetry = lastSentRef.current;
                 if (toRetry && chatId) {
                   lastSentRef.current = toRetry;
                   sendMutation.mutate({ content: toRetry, targetChatId: chatId });
@@ -489,35 +538,8 @@ export function ChatView() {
         </div>
       )}
 
-      {/* Input area */}
-      <div className="shrink-0 border-t border-border p-4">
-        <div className="mx-auto flex max-w-3xl gap-2">
-          <Textarea
-            placeholder="Send a message… (Enter to send, Shift+Enter for new line)"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            disabled={isStreaming}
-            className="min-h-[60px] resize-none font-mono text-sm"
-            rows={3}
-          />
-          <Button
-            onClick={handleSend}
-            disabled={!input.trim() || isStreaming}
-            className="self-end"
-            aria-label={isStreaming ? "Sending…" : "Send message"}
-          >
-            {isStreaming ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <>
-                <Send className="h-4 w-4" />
-                <span>Send</span>
-              </>
-            )}
-          </Button>
-        </div>
-      </div>
+      {/* Input area — isolated so typing doesn't re-render the whole chat */}
+      <ChatInputArea onSend={handleSend} isStreaming={isStreaming} />
 
       {/* Rename dialog */}
       <Dialog open={renameOpen} onOpenChange={setRenameOpen}>

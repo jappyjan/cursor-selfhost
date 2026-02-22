@@ -389,7 +389,7 @@ app.post("/api/chats/:id/messages", async (c) => {
   });
 
   let sessionId: string | null = null;
-  type Block = { type: "text"; content: string } | { type: "activity"; kind: string; label: string; details?: string };
+  type Block = { type: "text"; content: string } | { type: "activity"; kind: string; label: string; details?: string; toolName?: string; args?: Record<string, string>; output?: string };
   const blocks: Block[] = [];
   let resultContent: string | null = null; // fallback when Cursor sends only result (no assistant chunks)
   let stderrBuffer = "";
@@ -429,8 +429,8 @@ app.post("/api/chats/:id/messages", async (c) => {
           if (parsed.session_id) sessionId = parsed.session_id;
           // Activity (tool_call, thinking): add block, emit for UI
           if (isActivityContent(parsed)) {
-            const { label, details } = extractActivityInfo(parsed);
-            const block = { type: "activity" as const, kind: parsed.type, label, ...(details && { details }) };
+            const { label, details, toolName, args, output } = extractActivityInfo(parsed);
+            const block = { type: "activity" as const, kind: parsed.type, label, ...(details && { details }), ...(toolName && { toolName }), ...(args && Object.keys(args).length > 0 && { args }), ...(output && { output }) };
             blocks.push(block);
             safeEnqueue(new TextEncoder().encode(JSON.stringify({ type: "block", block }) + "\n"));
             continue;
@@ -468,8 +468,8 @@ app.post("/api/chats/:id/messages", async (c) => {
           if (parsed) {
             if (parsed.session_id) sessionId = parsed.session_id;
             if (isActivityContent(parsed)) {
-              const { label, details } = extractActivityInfo(parsed);
-              const block = { type: "activity" as const, kind: parsed.type, label, ...(details && { details }) };
+              const { label, details, toolName, args, output } = extractActivityInfo(parsed);
+              const block = { type: "activity" as const, kind: parsed.type, label, ...(details && { details }), ...(toolName && { toolName }), ...(args && Object.keys(args).length > 0 && { args }), ...(output && { output }) };
               blocks.push(block);
               safeEnqueue(new TextEncoder().encode(JSON.stringify({ type: "block", block }) + "\n"));
             } else if (isAssistantContent(parsed)) {

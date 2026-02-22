@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, memo } from "react";
 import { codeToHtml } from "shiki";
 import DOMPurify from "dompurify";
 import { Copy, Check } from "lucide-react";
@@ -11,7 +11,7 @@ interface CodeBlockProps {
   className?: string;
 }
 
-export function CodeBlock({ code, language = "text", className }: CodeBlockProps) {
+export const CodeBlock = memo(function CodeBlock({ code, language = "text", className }: CodeBlockProps) {
   const [html, setHtml] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -73,4 +73,4 @@ export function CodeBlock({ code, language = "text", className }: CodeBlockProps
       />
     </div>
   );
-}
+});
