@@ -554,6 +554,179 @@ describe("Chat isolation (different chats, different sessions)", () => {
   });
 });
 
+describe("Stop and resume (session context preserved)", () => {
+  it.skipIf(!useMockCli)("stop preserves session context and partial content", async () => {
+    const { chatId } = await setupProjectAndChat();
+
+    const res = await fetch(`/api/chats/${chatId}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "Stop me mid-stream" }),
+    });
+    expect(res.ok).toBe(true);
+
+    const reader = res.body?.getReader();
+    if (!reader) throw new Error("No body");
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let chunkCount = 0;
+    const maxChunksBeforeStop = 2;
+    while (chunkCount < maxChunksBeforeStop) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n").filter((l) => l.trim());
+      chunkCount += lines.length;
+      if (chunkCount >= maxChunksBeforeStop) break;
+    }
+    await fetch(`/api/chats/${chatId}/messages/stop`, { method: "POST" });
+    while (true) {
+      const { done } = await reader.read();
+      if (done) break;
+    }
+
+    await waitForPersist(300);
+
+    const msgs = await fetch(`/api/chats/${chatId}/messages`).then((r) => r.json());
+    expect(msgs.length).toBeGreaterThanOrEqual(2);
+    const userMsg = msgs.find((m: { role: string }) => m.role === "user");
+    const assistantMsg = msgs.find((m: { role: string }) => m.role === "assistant");
+    expect(userMsg?.content).toBe("Stop me mid-stream");
+    expect(assistantMsg).toBeDefined();
+
+    const chat = await fetch(`/api/chats/${chatId}`).then((r) => r.json());
+    expect(chat.sessionId).toBeTruthy();
+  });
+
+  it.skipIf(!useMockCli)("can resume after stop — session context intact", async () => {
+    const { chatId } = await setupProjectAndChat();
+
+    const res1 = await fetch(`/api/chats/${chatId}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "First message" }),
+    });
+    const reader1 = res1.body?.getReader();
+    if (!reader1) throw new Error("No body");
+    await reader1.read();
+    await fetch(`/api/chats/${chatId}/messages/stop`, { method: "POST" });
+    while (true) {
+      const { done } = await reader1.read();
+      if (done) break;
+    }
+
+    await waitForPersist(300);
+
+    const chatAfterStop = await fetch(`/api/chats/${chatId}`).then((r) => r.json());
+    const sessionIdAfterStop = chatAfterStop.sessionId;
+    expect(sessionIdAfterStop).toBeTruthy();
+
+    const res2 = await fetch(`/api/chats/${chatId}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "Second message after stop" }),
+    });
+    let sessionId2: string | null = null;
+    await consumeStream(res2, (obj) => {
+      if (obj.type === "done") sessionId2 = obj.sessionId ?? null;
+    });
+
+    expect(sessionId2).toBe(sessionIdAfterStop);
+
+    const msgs = await fetch(`/api/chats/${chatId}/messages`).then((r) => r.json());
+    expect(msgs.length).toBeGreaterThanOrEqual(4);
+    const userContents = msgs.filter((m: { role: string }) => m.role === "user").map((m: { content: string }) => m.content);
+    expect(userContents).toContain("First message");
+    expect(userContents).toContain("Second message after stop");
+  });
+
+  it.skipIf(!useMockCli)("stop does not lose messages or mix with other chats", async () => {
+    const { projectId, chatId: chatA } = await setupProjectAndChat();
+    const { chatId: chatB } = await createChat(projectId);
+
+    const resA = await fetch(`/api/chats/${chatA}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "Chat A - stop me" }),
+    });
+    const readerA = resA.body?.getReader();
+    if (!readerA) throw new Error("No body");
+    await readerA.read();
+    await fetch(`/api/chats/${chatA}/messages/stop`, { method: "POST" });
+    while (true) {
+      const { done } = await readerA.read();
+      if (done) break;
+    }
+
+    await waitForPersist(300);
+
+    await sendMessageAndDrain(chatB, "Chat B - full message");
+    await waitForPersist();
+
+    const msgsA = await fetch(`/api/chats/${chatA}/messages`).then((r) => r.json());
+    const msgsB = await fetch(`/api/chats/${chatB}/messages`).then((r) => r.json());
+
+    expect(msgsA[0].content).toBe("Chat A - stop me");
+    expect(msgsB[0].content).toBe("Chat B - full message");
+    expect(msgsA.some((m: { content: string }) => m.content?.includes("Chat B"))).toBe(false);
+    expect(msgsB.some((m: { content: string }) => m.content?.includes("Chat A"))).toBe(false);
+  });
+
+  it.skipIf(!useMockCli)("disconnect (reader.cancel) does NOT stop CLI — only explicit stop does", async () => {
+    const { chatId } = await setupProjectAndChat();
+
+    const res = await fetch(`/api/chats/${chatId}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "Disconnect me" }),
+    });
+    const reader = res.body?.getReader();
+    if (!reader) throw new Error("No body");
+    await reader.read();
+    await reader.cancel();
+    await waitForPersist(500);
+
+    const msgs = await fetch(`/api/chats/${chatId}/messages`).then((r) => r.json());
+    const assistantMsg = msgs.find((m: { role: string }) => m.role === "assistant");
+    expect(assistantMsg).toBeDefined();
+    expect(assistantMsg.content).toContain("[ASSISTANT_REPLY]");
+  });
+
+  it.skipIf(!useMockCli)("multiple stop-and-resume cycles preserve context", async () => {
+    const { chatId } = await setupProjectAndChat();
+
+    for (let i = 0; i < 2; i++) {
+      const res = await fetch(`/api/chats/${chatId}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: `Message ${i + 1} - stop` }),
+      });
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error("No body");
+      await reader.read();
+      await fetch(`/api/chats/${chatId}/messages/stop`, { method: "POST" });
+      while (true) {
+        const { done } = await reader.read();
+        if (done) break;
+      }
+      await waitForPersist(300);
+    }
+
+    const resFinal = await fetch(`/api/chats/${chatId}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "Final message - complete" }),
+    });
+    await consumeStream(resFinal, () => {});
+
+    const msgs = await fetch(`/api/chats/${chatId}/messages`).then((r) => r.json());
+    const userContents = msgs.filter((m: { role: string }) => m.role === "user").map((m: { content: string }) => m.content);
+    expect(userContents).toContain("Message 1 - stop");
+    expect(userContents).toContain("Message 2 - stop");
+    expect(userContents).toContain("Final message - complete");
+  });
+});
+
 const E2E_TIMEOUT = 90_000;
 const runE2E = process.env.RUN_E2E_WITH_REAL_CURSOR ? it : it.skip;
 

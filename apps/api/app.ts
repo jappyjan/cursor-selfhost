@@ -35,6 +35,9 @@ import {
 
 export const app = new Hono();
 
+/** Active streams by chatId — used for explicit stop only (not on disconnect). */
+const activeStreams = new Map<string, { kill: () => void }>();
+
 // CORS for frontend (dev: common Vite ports; prod: same-origin via proxy)
 app.use(
   "/api/*",
@@ -812,9 +815,20 @@ app.post("/api/chats/:id/messages", async (c) => {
         try {
           controller.enqueue(data);
         } catch {
-          /* stream may be closed — client disconnected; persistence continues */
+          /* stream may be closed — client disconnected; do NOT kill (explicit stop only) */
         }
       };
+      const unregister = () => activeStreams.delete(chatId);
+      activeStreams.set(chatId, {
+        kill: () => {
+          try {
+            proc.kill("SIGINT");
+          } catch {
+            /* proc may already have exited */
+          }
+          unregister();
+        },
+      });
       let streamClosed = false;
       const safeClose = () => {
         if (streamClosed) return;
@@ -873,6 +887,7 @@ app.post("/api/chats/:id/messages", async (c) => {
       };
       proc.stdout?.on("data", onData);
       proc.on("close", async (code) => {
+        unregister();
         const trimmed = ndjsonBuffer.trim();
         if (trimmed) {
           const parsed = parseCursorLine(trimmed);
@@ -932,6 +947,7 @@ app.post("/api/chats/:id/messages", async (c) => {
         safeClose();
       });
       proc.on("error", (err) => {
+        unregister();
         safeEnqueue(new TextEncoder().encode(JSON.stringify({ type: "error", error: err.message }) + "\n"));
         safeClose();
       });
@@ -946,4 +962,15 @@ app.post("/api/chats/:id/messages", async (c) => {
       Connection: "keep-alive",
     },
   });
+});
+
+// POST /api/chats/:id/messages/stop — explicit stop (user clicked stop; not on disconnect)
+app.post("/api/chats/:id/messages/stop", async (c) => {
+  const chatId = c.req.param("id");
+  const entry = activeStreams.get(chatId);
+  if (entry) {
+    entry.kill();
+    return c.json({ ok: true });
+  }
+  return c.json({ ok: true }); // no active stream is fine
 });

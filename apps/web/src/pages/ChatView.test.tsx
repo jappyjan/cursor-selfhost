@@ -17,6 +17,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
   return {
     ...actual,
     fetchConfig: vi.fn().mockResolvedValue({ configured: true }),
+    stopMessageStreaming: vi.fn().mockResolvedValue(undefined),
     fetchChat: vi.fn().mockImplementation((id: string) =>
       Promise.resolve({
         id,
@@ -79,7 +80,7 @@ describe("ChatView per-chat loading state", () => {
     fireEvent.keyDown(input, { key: "Enter", shiftKey: false });
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /Sending/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /Stop/i })).toBeInTheDocument();
     });
 
     unmount();
@@ -90,7 +91,7 @@ describe("ChatView per-chat loading state", () => {
     });
 
     expect(screen.getByRole("button", { name: /Send message/i })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Sending/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Stop/i })).not.toBeInTheDocument();
   });
 
   it("shows loading when sending from the current chat", async () => {
@@ -105,7 +106,7 @@ describe("ChatView per-chat loading state", () => {
     fireEvent.keyDown(input, { key: "Enter", shiftKey: false });
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /Sending/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /Stop/i })).toBeInTheDocument();
     });
   });
 
@@ -243,6 +244,35 @@ describe("ChatView per-chat loading state", () => {
 
     expect(screen.getByText(/Streaming content/)).toBeInTheDocument();
     expect(screen.queryByText(/^Partial$/)).not.toBeInTheDocument();
+  });
+
+  it("stop button calls stopMessageStreaming (does not disconnect from stream)", async () => {
+    vi.mocked(api.sendMessageStreaming).mockImplementation((_chatId, _content, onChunk) => {
+      onChunk({ type: "block", block: { type: "text", content: "Partial" } });
+      return new Promise((resolve) => setTimeout(resolve, 100));
+    });
+
+    renderChatAt("chat-1");
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText(/Send a message/)).toBeInTheDocument();
+    });
+
+    const input = screen.getByPlaceholderText(/Send a message/);
+    fireEvent.change(input, { target: { value: "Hello" } });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: false });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /Stop/i })).toBeInTheDocument();
+    });
+
+    const stopButton = screen.getByRole("button", { name: /Stop/i });
+    fireEvent.click(stopButton);
+
+    expect(api.stopMessageStreaming).toHaveBeenCalledWith("chat-1");
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: /Stop/i })).not.toBeInTheDocument();
+    });
   });
 
   it("loads all messages from fetchMessages and displays them", async () => {

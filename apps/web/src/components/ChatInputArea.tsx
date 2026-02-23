@@ -1,18 +1,19 @@
 import { useState, useCallback, useRef } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
-import { ArrowUp, Loader2, ImagePlus, X } from "lucide-react";
+import { ArrowUp, Square, ImagePlus, X } from "lucide-react";
 
 const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
 const MAX_IMAGE_SIZE_MB = 10;
 
 interface ChatInputAreaProps {
   onSend: (content: string, files?: File[], imagePreviewUrls?: string[]) => void;
+  onStop?: () => void;
   isStreaming: boolean;
 }
 
 /** Isolated input area — owns its own state so typing doesn't re-render the whole chat. */
-export function ChatInputArea({ onSend, isStreaming }: ChatInputAreaProps) {
+export function ChatInputArea({ onSend, onStop, isStreaming }: ChatInputAreaProps) {
   const [input, setInput] = useState("");
   const [attachments, setAttachments] = useState<{ file: File; url: string }[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -134,13 +135,13 @@ export function ChatInputArea({ onSend, isStreaming }: ChatInputAreaProps) {
           </Button>
           <Button
             size="icon"
-            onClick={handleSend}
-            disabled={!canSend}
+            onClick={isStreaming ? onStop : handleSend}
+            disabled={!canSend && !isStreaming}
             className="h-8 w-8 rounded-full"
-            aria-label={isStreaming ? "Sending…" : "Send message"}
+            aria-label={isStreaming ? "Stop" : "Send message"}
           >
             {isStreaming ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
+              <Square className="h-4 w-4 fill-current" />
             ) : (
               <ArrowUp className="h-4 w-4" />
             )}

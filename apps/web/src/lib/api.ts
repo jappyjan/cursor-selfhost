@@ -303,6 +303,12 @@ export async function deleteChat(chatId: string): Promise<void> {
   if (!res.ok) throw new Error("Failed to delete chat");
 }
 
+/** Explicit stop — kills CLI at current state. Call when user clicks stop (not on disconnect). */
+export async function stopMessageStreaming(chatId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/chats/${chatId}/messages/stop`, { method: "POST" });
+  if (!res.ok) throw new Error("Failed to stop");
+}
+
 export type MessageBlock =
   | { type: "text"; content: string }
   | { type: "activity"; kind: string; label: string; details?: string; toolName?: string; args?: Record<string, string>; output?: string };

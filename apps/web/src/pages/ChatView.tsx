@@ -64,7 +64,6 @@ export function ChatView() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const lastSentRef = useRef<string>("");
   const lastSentImageUrlsRef = useRef<string[]>([]);
-  const abortControllerRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesScrollRef = useRef<HTMLDivElement>(null);
   const userAtBottomRef = useRef(true);
@@ -127,8 +126,6 @@ export function ChatView() {
     }) => {
       setSendError(null);
       setStreamingBlocks([]);
-      abortControllerRef.current = new AbortController();
-      const signal = abortControllerRef.current.signal;
       let imagePaths: string[] | undefined;
       if (files?.length) {
         const { paths } = await uploadImages(targetChatId, files);
@@ -175,7 +172,7 @@ export function ChatView() {
           queryClient.invalidateQueries({ queryKey: ["chat", targetChatId] });
           queryClient.invalidateQueries({ queryKey: ["chats"] });
         }
-      }, imagePaths, signal);
+      }, imagePaths);
     },
     onSuccess: async (_data, { targetChatId }) => {
       lastSentImageUrlsRef.current = [];
@@ -191,18 +188,10 @@ export function ChatView() {
         queryClient.invalidateQueries({ queryKey: ["chats"] });
       }, 5000);
     },
-    onError: (err, { targetChatId }) => {
+    onError: (err) => {
       lastSentImageUrlsRef.current = [];
-      const isAbort = (err as Error).name === "AbortError";
-      if (!isAbort) setSendError((err as Error).message);
+      setSendError((err as Error).message);
       setStreamingBlocks([]);
-      if (isAbort && targetChatId) {
-        void Promise.all([
-          queryClient.invalidateQueries({ queryKey: ["messages", targetChatId] }),
-          queryClient.invalidateQueries({ queryKey: ["chat", targetChatId] }),
-          queryClient.invalidateQueries({ queryKey: ["chats"] }),
-        ]);
-      }
     },
   });
 
@@ -224,8 +213,10 @@ export function ChatView() {
   );
 
   const handleStop = useCallback(() => {
-    abortControllerRef.current?.abort();
-  }, []);
+    if (chatId) {
+      void stopMessageStreaming(chatId);
+    }
+  }, [chatId]);
 
   const openRenameDialog = useCallback(() => {
     setRenameTitle(chat?.title ?? "New chat");
