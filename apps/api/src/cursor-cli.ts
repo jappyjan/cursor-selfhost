@@ -35,6 +35,7 @@ const CURSOR_CLI_TOOL_KEYS: Record<string, string> = {
   applyPatchToolCall: "apply_patch",
   webSearchToolCall: "web_search",
   fetchUrlToolCall: "fetch_url",
+  todoWriteToolCall: "todo_write",
 };
 
 /** Short display labels for UI (no "Tool: " prefix). */
@@ -51,6 +52,7 @@ const TOOL_DISPLAY_LABELS: Record<string, string> = {
   apply_patch: "Patch",
   web_search: "Web search",
   fetch_url: "Fetch URL",
+  todo_write: "Todo list",
 };
 
 /** Derive display name from unknown tool key (e.g. "fooBarToolCall" → "foo_bar"). */
@@ -358,18 +360,22 @@ function extractCursorCliToolCall(line: CursorLine): ParsedToolCall | null {
     if (val && typeof val === "object" && "args" in val) {
       const displayName = toolKeyToDisplayName(key);
       const argsObj = (val as { args?: Record<string, unknown> }).args;
-      const args = argsObj && typeof argsObj === "object" ? flattenArgs(argsObj) : {};
+      const args = argsObj && typeof argsObj === "object" ? flattenArgs(argsObj, displayName) : {};
       return { toolName: displayName, args };
     }
   }
   return null;
 }
 
-function flattenArgs(obj: Record<string, unknown>): Record<string, string> {
+function flattenArgs(obj: Record<string, unknown>, toolName?: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(obj)) {
     if (typeof v === "string") out[k] = v;
     else if (typeof v === "number") out[k] = String(v);
+    else if (typeof v === "boolean") out[k] = String(v);
+    else if (toolName === "todo_write" && k === "todos" && Array.isArray(v)) {
+      out[k] = JSON.stringify(v);
+    }
   }
   return out;
 }
@@ -421,11 +427,16 @@ function extractStructuredToolCall(line: CursorLine): ParsedToolCall | null {
 
 function parseJsonArgs(val: unknown): Record<string, string> | null {
   if (val == null) return null;
+  const stringify = (v: unknown): string => {
+    if (typeof v === "string") return v;
+    if (typeof v === "number" || typeof v === "boolean") return String(v);
+    if (v != null && (Array.isArray(v) || typeof v === "object")) return JSON.stringify(v);
+    return v != null ? String(v) : "";
+  };
   if (typeof val === "object" && !Array.isArray(val) && val !== null) {
     const out: Record<string, string> = {};
     for (const [k, v] of Object.entries(val)) {
-      if (typeof v === "string") out[k] = v;
-      else if (v != null) out[k] = String(v);
+      if (v != null) out[k] = stringify(v);
     }
     return out;
   }
@@ -435,8 +446,7 @@ function parseJsonArgs(val: unknown): Record<string, string> | null {
       if (parsed && typeof parsed === "object") {
         const out: Record<string, string> = {};
         for (const [k, v] of Object.entries(parsed)) {
-          if (typeof v === "string") out[k] = v;
-          else if (v != null) out[k] = String(v);
+          if (v != null) out[k] = stringify(v);
         }
         return out;
       }
@@ -449,7 +459,8 @@ function parseJsonArgs(val: unknown): Record<string, string> | null {
 
 const EDIT_TOOLS = new Set(["search_replace", "edit", "write", "apply_patch"]);
 const SHELL_TOOLS = new Set(["run_terminal_cmd"]);
-const TOOLS_WITH_ARGS = new Set([...EDIT_TOOLS, ...SHELL_TOOLS]);
+const TODO_TOOLS = new Set(["todo_write"]);
+const TOOLS_WITH_ARGS = new Set([...EDIT_TOOLS, ...SHELL_TOOLS, ...TODO_TOOLS]);
 
 /** Extract output from tool_result (Cursor CLI may put it in result, output, or message.content). */
 function extractToolResultOutput(line: CursorLine): string | undefined {

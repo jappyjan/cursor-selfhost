@@ -7,6 +7,7 @@ import {
   fetchMessages,
   fetchProjectBySlug,
   sendMessageStreaming,
+  stopMessageStreaming,
   uploadImages,
   updateChat,
   deleteChat,
@@ -15,6 +16,7 @@ import {
 } from "@/lib/api";
 import { MessageContent, TypingIndicator } from "@/components/MessageContent";
 import { ToolCallDisplay } from "@/components/ToolCallDisplay";
+import { TodoListPanel, type TodoItem } from "@/components/TodoListPanel";
 import { ChatInputArea } from "@/components/ChatInputArea";
 import {
   DropdownMenu,
@@ -62,6 +64,7 @@ export function ChatView() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const lastSentRef = useRef<string>("");
   const lastSentImageUrlsRef = useRef<string[]>([]);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesScrollRef = useRef<HTMLDivElement>(null);
   const userAtBottomRef = useRef(true);
@@ -124,6 +127,8 @@ export function ChatView() {
     }) => {
       setSendError(null);
       setStreamingBlocks([]);
+      abortControllerRef.current = new AbortController();
+      const signal = abortControllerRef.current.signal;
       let imagePaths: string[] | undefined;
       if (files?.length) {
         const { paths } = await uploadImages(targetChatId, files);
@@ -170,7 +175,7 @@ export function ChatView() {
           queryClient.invalidateQueries({ queryKey: ["chat", targetChatId] });
           queryClient.invalidateQueries({ queryKey: ["chats"] });
         }
-      }, imagePaths);
+      }, imagePaths, signal);
     },
     onSuccess: async (_data, { targetChatId }) => {
       lastSentImageUrlsRef.current = [];
@@ -186,10 +191,18 @@ export function ChatView() {
         queryClient.invalidateQueries({ queryKey: ["chats"] });
       }, 5000);
     },
-    onError: (err) => {
+    onError: (err, { targetChatId }) => {
       lastSentImageUrlsRef.current = [];
-      setSendError((err as Error).message);
+      const isAbort = (err as Error).name === "AbortError";
+      if (!isAbort) setSendError((err as Error).message);
       setStreamingBlocks([]);
+      if (isAbort && targetChatId) {
+        void Promise.all([
+          queryClient.invalidateQueries({ queryKey: ["messages", targetChatId] }),
+          queryClient.invalidateQueries({ queryKey: ["chat", targetChatId] }),
+          queryClient.invalidateQueries({ queryKey: ["chats"] }),
+        ]);
+      }
     },
   });
 
@@ -209,6 +222,10 @@ export function ChatView() {
     },
     [isStreaming, sendMutation, chatId]
   );
+
+  const handleStop = useCallback(() => {
+    abortControllerRef.current?.abort();
+  }, []);
 
   const openRenameDialog = useCallback(() => {
     setRenameTitle(chat?.title ?? "New chat");
@@ -302,6 +319,35 @@ export function ChatView() {
     return null;
   }
 
+  /** Extract and merge todos from all todo_write activity blocks in display items. */
+  function extractTodos(items: DisplayItem[]): TodoItem[] {
+    const byId = new Map<string, TodoItem>();
+    for (const item of items) {
+      if (item.type !== "assistant" || item.block.type !== "activity") continue;
+      const b = item.block;
+      if (b.toolName !== "todo_write" || !b.args?.todos) continue;
+      let arr: unknown[];
+      try {
+        const parsed = JSON.parse(b.args.todos);
+        arr = Array.isArray(parsed) ? parsed : [];
+      } catch {
+        continue;
+      }
+      const merge = b.args.merge === "true";
+      const todos = arr
+        .filter((t): t is Record<string, unknown> => t != null && typeof t === "object")
+        .map((t) => ({
+          id: String(t.id ?? ""),
+          content: String(t.content ?? ""),
+          status: (["pending", "in_progress", "completed", "cancelled"].includes(String(t.status)) ? t.status : "pending") as TodoItem["status"],
+        }))
+        .filter((t) => t.id);
+      if (!merge) byId.clear();
+      for (const t of todos) byId.set(t.id, t);
+    }
+    return Array.from(byId.values());
+  }
+
   const lastAssistantIdx = messages.map((m, i) => (m.role === "assistant" ? i : -1)).filter((i) => i >= 0).pop() ?? -1;
   const displayItems: DisplayItem[] = [];
   for (let i = 0; i < messages.length; i++) {
@@ -361,6 +407,7 @@ export function ChatView() {
   }
 
   const collapsedItems = collapseThinkingItems(displayItems);
+  const todos = extractTodos(displayItems);
 
   const lastScrollTimeRef = useRef(0);
   const SCROLL_THROTTLE_MS = 100;
@@ -420,6 +467,7 @@ export function ChatView() {
         className="relative flex-1 overflow-y-auto p-6"
         onScroll={handleMessagesScroll}
       >
+        <TodoListPanel todos={todos} className="-mx-6 -mt-6 mb-4" />
         <div className="mx-auto w-full max-w-5xl space-y-3">
           {!isCursorLoggedIn && (
             <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 p-4">
@@ -516,6 +564,26 @@ export function ChatView() {
                       </div>
                     );
                   }
+                  if (item.block.toolName === "todo_write" && item.block.args?.todos) {
+                    let summary = "Updated todo list";
+                    try {
+                      const arr = JSON.parse(item.block.args.todos) as { content?: string }[];
+                      if (Array.isArray(arr) && arr.length > 0) {
+                        const first = arr[0]?.content;
+                        summary = first ? `Added "${String(first).slice(0, 40)}${String(first).length > 40 ? "…" : ""}" to todo list` : "Updated todo list";
+                      }
+                    } catch {
+                      /* ignore */
+                    }
+                    return (
+                      <div
+                        key={`${item.messageId}-${idx}`}
+                        className="rounded-lg border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground"
+                      >
+                        {summary}
+                      </div>
+                    );
+                  }
                   return (
                     <div
                       key={`${item.messageId}-${idx}`}
@@ -598,7 +666,7 @@ export function ChatView() {
       )}
 
       {/* Input area — isolated so typing doesn't re-render the whole chat */}
-      <ChatInputArea onSend={handleSend} isStreaming={isStreaming} />
+      <ChatInputArea onSend={handleSend} onStop={handleStop} isStreaming={isStreaming} />
 
       {/* Rename dialog */}
       <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
